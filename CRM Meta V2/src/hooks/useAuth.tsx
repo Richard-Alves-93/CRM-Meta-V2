@@ -6,61 +6,91 @@ interface AuthCtx {
   user: User | null;
   session: Session | null;
   loading: boolean;
+  role: string | null;
+  tenantId: string | null;
   signOut: () => Promise<void>;
+  refreshProfile: () => Promise<void>;
 }
 
-const AuthContext = createContext<AuthCtx>({ user: null, session: null, loading: true, signOut: async () => {} });
+const AuthContext = createContext<AuthCtx>({ 
+  user: null, 
+  session: null, 
+  loading: true, 
+  role: null, 
+  tenantId: null,
+  signOut: async () => {},
+  refreshProfile: async () => {} 
+});
 
 export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
+  const [role, setRole] = useState<string | null>(null);
+  const [tenantId, setTenantId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+
+  const fetchProfile = async (uid: string) => {
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('role, tenant_id')
+        .eq('user_id', uid)
+        .single();
+      
+      if (error) throw error;
+      if (data) {
+        let currentTenantId = data.tenant_id;
+        
+        // --- ONBOARDING AUTOMÁTICO ---
+        if (!currentTenantId && data.role !== 'master_admin') {
+          console.log('[Auth] Usuário novo sem empresa detectado. Gerando cadastro...');
+          const currentEmail = user?.email || 'novo_usuario';
+          const userName = user?.user_metadata?.full_name || user?.user_metadata?.name || currentEmail.split('@')[0];
+          const companyName = `Empresa de ${userName}`;
+          
+          const { data: newTenant, error: tenantErr } = await supabase
+            .from('tenants')
+            .insert({ name: companyName, status: 'active', plan: 'gratuito' })
+            .select('id')
+            .single();
+            
+          if (tenantErr) {
+             console.error('[Auth] Erro na criação da empresa:', tenantErr);
+          } else if (newTenant) {
+             currentTenantId = newTenant.id;
+             // Atualiza o perfil para amarrar a empresa
+             await supabase.from('profiles').update({ tenant_id: currentTenantId }).eq('user_id', uid);
+             console.log('[Auth] Empresa criada e vinculada com sucesso.');
+          }
+        }
+        
+        setRole(data.role);
+        setTenantId(currentTenantId);
+      }
+    } catch (err) {
+      console.warn('[Auth] Não foi possível carregar o perfil:', err);
+    }
+  };
 
   useEffect(() => {
     let isMounted = true;
 
-    const validateSession = async () => {
-      try {
-        const { data: { session } } = await supabase.auth.getSession();
-
-        if (session?.access_token) {
-          const { data: { user }, error } = await supabase.auth.getUser();
-          if (error || !user) {
-            console.warn('[Auth] Sessão inválida detectada. Limpando tokens antigos.', error);
-            await supabase.auth.signOut().catch((signOutError) =>
-              console.error('[Auth] Erro ao limpar sessão inválida:', signOutError)
-            );
-            if (isMounted) {
-              setUser(null);
-              setSession(null);
-            }
-          } else if (isMounted) {
-            setUser(user);
-            setSession(session);
-          }
-        }
-      } catch (err) {
-        console.error('[Auth] Falha ao validar sessão inicial:', err);
-        await supabase.auth.signOut().catch((signOutError) =>
-          console.error('[Auth] Erro ao limpar sessão no init:', signOutError)
-        );
-      } finally {
-        if (isMounted) setLoading(false);
-      }
-    };
-
+    // 1. Monitora mudanças de autenticação (Simples e Direto)
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (!isMounted) return;
+      
+      console.log(`[Auth] Evento: ${event}`);
       setSession(session);
       setUser(session?.user ?? null);
-
-      if (event === 'SIGNED_IN' && session?.provider_token) {
-        localStorage.setItem('google_provider_token', session.provider_token);
-      }
-
+      
+      // Libera a tela imediatamente se já temos resposta do Supabase
       setLoading(false);
     });
 
-    validateSession();
+    // 2. Busca o Perfil em paralelo quando o usuário mudar (Fora do lock do Auth)
+    if (user && !role) {
+      fetchProfile(user.id);
+    }
 
     return () => {
       isMounted = false;
@@ -68,14 +98,30 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     };
   }, []);
 
+  // Efeito extra para garantir que o perfil seja buscado sempre que o usuário logar
+  useEffect(() => {
+    if (user) {
+      fetchProfile(user.id);
+    } else {
+      setRole(null);
+      setTenantId(null);
+    }
+  }, [user]);
+
   const signOut = async () => {
     await supabase.auth.signOut();
     setUser(null);
     setSession(null);
+    setRole(null);
+    setTenantId(null);
+  };
+
+  const refreshProfile = async () => {
+    if (user) await fetchProfile(user.id);
   };
 
   return (
-    <AuthContext.Provider value={{ user, session, loading, signOut }}>
+    <AuthContext.Provider value={{ user, session, loading, role, tenantId, signOut, refreshProfile }}>
       {children}
     </AuthContext.Provider>
   );

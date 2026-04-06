@@ -2,17 +2,16 @@
 import { createClient } from '@supabase/supabase-js';
 import type { Database } from './types';
 
-// Hardcoded para forçar a conexão com o novo projeto pysjupsjttrogqalpdds (bypassing Lovable)
-const SUPABASE_URL = "https://pysjupsjttrogqalpdds.supabase.co";
-const SUPABASE_ANON_KEY = "sb_publishable_muO0JzHeCBZ9dGHs5QkSmw_d9YlFJ6N";
+// Use environment variables instead of hardcoded values
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 export const STORAGE_BUCKET = 'logos';
 
 if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-  throw new Error('Supabase client requires VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to be set.');
+  console.error('Supabase URL ou Key não encontradas no .env!');
 }
 
-console.log('SUPABASE URL ATUAL:', SUPABASE_URL);
-console.log('SUPABASE PROJECT ID ATUAL:', SUPABASE_URL?.match(/\/\/([^.]+)\./)?.[1]);
+console.log('CONECTANDO AO PROJETO:', SUPABASE_URL);
 
 // Import the supabase client like this:
 // import { supabase } from "@/integrations/supabase/client";

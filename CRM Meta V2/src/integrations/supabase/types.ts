@@ -24,6 +24,7 @@ export type Database = {
           telefone: string | null
           user_id: string
           whatsapp: string | null
+          tenant_id: string | null
         }
         Insert: {
           created_at?: string
@@ -34,6 +35,7 @@ export type Database = {
           telefone?: string | null
           user_id: string
           whatsapp?: string | null
+          tenant_id?: string | null
         }
         Update: {
           created_at?: string
@@ -44,6 +46,7 @@ export type Database = {
           telefone?: string | null
           user_id?: string
           whatsapp?: string | null
+          tenant_id?: string | null
         }
         Relationships: []
       }
@@ -56,6 +59,7 @@ export type Database = {
           user_id: string
           valor_bruto: number
           valor_liquido: number | null
+          tenant_id: string | null
         }
         Insert: {
           created_at?: string
@@ -65,6 +69,7 @@ export type Database = {
           user_id: string
           valor_bruto: number
           valor_liquido?: number | null
+          tenant_id?: string | null
         }
         Update: {
           created_at?: string
@@ -74,6 +79,7 @@ export type Database = {
           user_id?: string
           valor_bruto?: number
           valor_liquido?: number | null
+          tenant_id?: string | null
         }
         Relationships: []
       }
@@ -101,6 +107,7 @@ export type Database = {
           nome?: string
           user_id?: string
           valor?: number
+          tenant_id?: string | null
         }
         Relationships: []
       }
@@ -156,6 +163,7 @@ export type Database = {
           purchase_history_id: string | null
           status: string
           user_id: string
+          tenant_id: string | null
         }
         Insert: {
           created_at?: string
@@ -170,6 +178,7 @@ export type Database = {
           purchase_history_id?: string | null
           status?: string
           user_id: string
+          tenant_id?: string | null
         }
         Update: {
           created_at?: string
@@ -184,6 +193,7 @@ export type Database = {
           purchase_history_id?: string | null
           status?: string
           user_id?: string
+          tenant_id?: string | null
         }
         Relationships: [
           {
@@ -299,6 +309,8 @@ export type Database = {
           display_name: string | null
           id: string
           user_id: string
+          role: string | null
+          tenant_id: string | null
         }
         Insert: {
           avatar_url?: string | null
@@ -306,13 +318,44 @@ export type Database = {
           display_name?: string | null
           id?: string
           user_id: string
+          role?: string | null
+          tenant_id?: string | null
         }
         Update: {
           avatar_url?: string | null
-          created_at?: string
+          created_at?: string | null
           display_name?: string | null
           id?: string
           user_id?: string
+          role?: string | null
+          tenant_id?: string | null
+        }
+        Relationships: []
+      }
+      tenants: {
+        Row: {
+          created_at: string | null
+          id: string
+          name: string
+          plan: string | null
+          slug: string | null
+          status: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          name: string
+          plan?: string | null
+          slug?: string | null
+          status?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          name?: string
+          plan?: string | null
+          slug?: string | null
+          status?: string | null
         }
         Relationships: []
       }

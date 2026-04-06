@@ -19,6 +19,13 @@ const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
   return <>{children}</>;
 };
 
+const AdminMasterRoute = ({ children }: { children: React.ReactNode }) => {
+  const { user, role, loading } = useAuth();
+  if (loading) return <div className="min-h-screen flex items-center justify-center bg-background"><span className="text-muted-foreground">Carregando...</span></div>;
+  if (!user || role !== 'master_admin') return <Navigate to="/" replace />;
+  return <>{children}</>;
+};
+
 const PublicRoute = ({ children }: { children: React.ReactNode }) => {
   const { user, loading } = useAuth();
   if (loading) return <div className="min-h-screen flex items-center justify-center bg-background"><span className="text-muted-foreground">Carregando...</span></div>;
@@ -110,6 +117,7 @@ const App = () => (
           <PersistRouteManager />
           <Routes>
             <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />
+            <Route path="/admin/*" element={<AdminMasterRoute><Index /></AdminMasterRoute>} />
             <Route path="/*" element={<ProtectedRoute><Index /></ProtectedRoute>} />
           </Routes>
         </AuthProvider>

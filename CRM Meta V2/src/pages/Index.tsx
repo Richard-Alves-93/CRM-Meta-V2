@@ -1,11 +1,13 @@
 import { useState, useCallback, useEffect, lazy } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
+import { Button } from "@/components/ui/button";
 import CrmSidebar, { CrmPage } from "@/components/crm/CrmSidebar";
 import { PageSuspense } from "@/components/common/PageSuspense";
 import DashboardPage from "@/components/crm/DashboardPage";
 import MetaModal from "@/components/crm/MetaModal";
 import LancamentoModal from "@/components/crm/LancamentoModal";
 import GoalReminderModal from "@/components/crm/GoalReminderModal";
+import BlockedAccess from "@/components/crm/BlockedAccess";
 import { getConfirmedGoalsMonth, setConfirmedGoalsMonth, shouldAskNextMonthGoals, getCurrentMonthStr } from "@/services/goalService";
 import {
   fetchDatabase, addMeta, updateMeta, deleteMeta,
@@ -28,30 +30,34 @@ const CadastrosPage = lazy(() => import("@/components/crm/cadastros"));
 const RecomprasPage = lazy(() => import("@/components/crm/RecomprasPage"));
 const RelatoriosPage = lazy(() => import("@/components/crm/RelatoriosPage"));
 const ConfiguracoesPage = lazy(() => import("@/components/crm/ConfiguracoesPage"));
+const MasterAdminDashboard = lazy(() => import("@/components/crm/MasterAdminDashboard"));
 
 const Index = () => {
-  const { user, signOut } = useAuth();
+  const { user, role, tenantId, signOut } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
 
-  const routeToPage = (pathname: string): CrmPage => {
+  const routeToPage = (pathname: string): CrmPage | 'admin' => {
     const path = pathname === "/" ? "dashboard" : pathname.replace(/^\//, "");
-    const validPages: CrmPage[] = ["dashboard", "lancamentos", "metas", "cadastros", "recompras", "relatorios", "configuracoes"];
-    return validPages.includes(path as CrmPage) ? (path as CrmPage) : "dashboard";
+    if (path.startsWith('admin')) return 'admin';
+    const validPages: (CrmPage | 'admin')[] = ["dashboard", "lancamentos", "metas", "cadastros", "recompras", "relatorios", "configuracoes", "admin"];
+    return validPages.includes(path as any) ? (path as any) : "dashboard";
   };
 
   const page = routeToPage(location.pathname);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [db, setDb] = useState<CrmDatabase>({ metas: [], lancamentos: [] });
   const [loading, setLoading] = useState(true);
+  const [tenantStatus, setTenantStatus] = useState<string | null>(null);
   const [customLogo, setCustomLogo] = useState<string | null>(() => {
     return localStorage.getItem('crm_custom_logo');
   });
 
   useEffect(() => {
-    if (user?.user_metadata?.logo_url && user.user_metadata.logo_url !== customLogo) {
-      setCustomLogo(user.user_metadata.logo_url);
-      localStorage.setItem('crm_custom_logo', user.user_metadata.logo_url);
+    const userLogo = user?.user_metadata?.logo_url;
+    if (userLogo && userLogo !== customLogo) {
+      setCustomLogo(userLogo);
+      localStorage.setItem('crm_custom_logo', userLogo);
     }
   }, [user, customLogo]);
 
@@ -63,6 +69,28 @@ const Index = () => {
 
   const refresh = useCallback(async () => {
     try {
+      if (page === 'admin') {
+        setLoading(false);
+        return;
+      }
+      
+      // CHECA O STATUS DO INQUILINO ANTES DE TUDO
+      if (tenantId) {
+        const { data: tData, error: tErr } = await supabase
+          .from('tenants')
+          .select('status')
+          .eq('id', tenantId)
+          .single();
+          
+        if (!tErr && tData) {
+          setTenantStatus(tData.status);
+          if (tData.status === 'suspended') {
+            setLoading(false);
+            return; // Aborta o carregamento do resto se estiver suspenso
+          }
+        }
+      }
+
       const data = await fetchDatabase();
       setDb(data);
     } catch (err) {
@@ -70,7 +98,7 @@ const Index = () => {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [page, tenantId]);
 
   useEffect(() => { refresh(); }, [refresh]);
 
@@ -249,12 +277,24 @@ const Index = () => {
     );
   }
 
+  // REDIRECIONAMENTO VIRTUAL PARA TELA DE BLOQUEIO
+  if (tenantStatus === 'suspended' && role !== 'master_admin') {
+    return <BlockedAccess />;
+  }
+
   return (
     <div className="flex min-h-screen bg-background">
       <CrmSidebar 
-        currentPage={page} 
+        currentPage={page === 'admin' ? 'dashboard' : page} 
         isOpen={isSidebarOpen}
-        onNavigate={(p) => { navigate(p === "dashboard" ? "/" : `/${p}`); setIsSidebarOpen(false); }} 
+        onNavigate={(p) => { 
+          if (p === 'dashboard' && role === 'master_admin' && location.pathname.startsWith('/admin')) {
+             navigate('/admin');
+          } else {
+             navigate(p === "dashboard" ? "/" : `/${p}`); 
+          }
+          setIsSidebarOpen(false); 
+        }} 
         onClose={() => setIsSidebarOpen(false)}
         logoUrl={customLogo}
       />
@@ -268,6 +308,16 @@ const Index = () => {
             >
               <Menu size={20} />
             </button>
+            {role === 'master_admin' && (
+              <Button 
+                variant={page === 'admin' ? 'default' : 'outline'} 
+                size="sm" 
+                onClick={() => navigate('/admin')}
+                className="hidden md:flex"
+              >
+                Painel Master
+              </Button>
+            )}
           </div>
           <div className="flex items-center gap-3">
             <Avatar className="w-8 h-8">
@@ -286,6 +336,11 @@ const Index = () => {
         </header>
 
         <div className="flex-1 p-4 md:p-8 overflow-x-hidden">
+          {page === "admin" && (
+            <PageSuspense>
+              <MasterAdminDashboard />
+            </PageSuspense>
+          )}
           {page === "dashboard" && (
             <DashboardPage db={db} onOpenLancamento={() => { setEditingLanc(null); setLancModalOpen(true); }}
               onEditMeta={handleEditMeta} onDeleteMeta={handleDeleteMeta}
