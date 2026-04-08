@@ -16,7 +16,7 @@ import {
   Meta, Lancamento, CrmDatabase
 } from "@/lib/crm-data";
 import { hexToHslStr } from "@/lib/colors";
-import { useAuth } from "@/hooks/useAuth";
+import { useAuth } from "@/modules/auth/hooks/useAuth";
 import { toast } from "sonner";
 import { LogOut, Menu } from "lucide-react";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
@@ -30,7 +30,7 @@ const CadastrosPage = lazy(() => import("@/components/crm/cadastros"));
 const RecomprasPage = lazy(() => import("@/components/crm/RecomprasPage"));
 const RelatoriosPage = lazy(() => import("@/components/crm/RelatoriosPage"));
 const ConfiguracoesPage = lazy(() => import("@/components/crm/ConfiguracoesPage"));
-const MasterAdminDashboard = lazy(() => import("@/components/crm/MasterAdminDashboard"));
+const MasterAdminDashboard = lazy(() => import("@/modules/master/pages/MasterAdminDashboard"));
 
 const Index = () => {
   const { user, role, tenantId, signOut } = useAuth();

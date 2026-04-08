@@ -1,14 +1,22 @@
 import { lovable } from "@/integrations/lovable";
 import { supabase } from "@/integrations/supabase/client";
 import { useState } from "react";
-import { BarChart3 } from "lucide-react";
+import { BarChart3, Info } from "lucide-react";
 import { toast } from "sonner";
 
 const Login = () => {
   const [loading, setLoading] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [isRegisterMode, setIsRegisterMode] = useState(false);
+  const urlParams = new URLSearchParams(window.location.search);
+  const isInvited = urlParams.has('invite');
+  const inviteCode = urlParams.get('invite');
+
+  if (inviteCode && typeof window !== 'undefined') {
+    localStorage.setItem('pending_invite_code', inviteCode);
+  }
+
+  const [isRegisterMode, setIsRegisterMode] = useState(isInvited);
 
   const handleEmailAuth = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -18,6 +26,9 @@ const Login = () => {
         const { data, error } = await supabase.auth.signUp({
           email,
           password,
+          options: {
+            emailRedirectTo: inviteCode ? `${window.location.origin}/login?invite=${inviteCode}` : window.location.origin,
+          }
         });
 
         if (error) throw error;
@@ -58,7 +69,7 @@ const Login = () => {
       await supabase.auth.signInWithOAuth({
         provider: "google",
         options: {
-          redirectTo: window.location.origin,
+          redirectTo: inviteCode ? `${window.location.origin}/login?invite=${inviteCode}` : window.location.origin,
           scopes: "https://www.googleapis.com/auth/drive.file",
         }
       });
@@ -80,9 +91,23 @@ const Login = () => {
             <BarChart3 className="text-primary-foreground" size={28} />
           </div>
           <h1 className="text-2xl font-bold text-card-foreground mb-1">CRM Dashboard</h1>
-          <p className="text-muted-foreground text-sm mb-8">
+          <p className="text-muted-foreground text-sm mb-6">
             Gerencie suas vendas e metas com inteligência
           </p>
+
+          {isInvited && (
+            <div className="mb-6 p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800 rounded-lg flex gap-3 text-left">
+              <Info className="h-5 w-5 text-blue-600 shrink-0 mt-0.5" />
+              <div>
+                <p className="text-sm font-semibold text-blue-800 dark:text-blue-300">Você recebeu um convite!</p>
+                <p className="text-xs text-blue-700/80 dark:text-blue-400/80">
+                  {isRegisterMode 
+                    ? "Crie sua conta abaixo para assumir o controle da sua nova empresa."
+                    : "Faça login para vincular seu acesso à empresa convidada."}
+                </p>
+              </div>
+            </div>
+          )}
 
           <form onSubmit={handleEmailAuth} className="space-y-4 mb-4 text-left">
             <div>

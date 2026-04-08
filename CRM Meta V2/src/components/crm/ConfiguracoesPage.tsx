@@ -2,9 +2,10 @@ import { useEffect, useState } from "react";
 import { CrmDatabase, exportarDadosJSON, deleteMeta, deleteLancamento, addMeta, addLancamento } from "@/lib/crm-data";
 import { hexToHslStr } from "@/lib/colors";
 import { toast } from "sonner";
-import { useAuth } from "@/hooks/useAuth";
+import { useAuth } from "@/modules/auth/hooks/useAuth";
 import { supabase, STORAGE_BUCKET } from "@/integrations/supabase/client";
 import { WorkSettingsSection } from "./WorkSettingsSection";
+import { CompanyProfileSection } from "./CompanyProfileSection";
 
 interface ConfiguracoesPageProps {
   db: CrmDatabase;
@@ -283,17 +284,17 @@ const ConfiguracoesPage = ({ db, onRefresh, customLogo, onLogoChange }: Configur
     reader.readAsText(file);
   };
 
-  const [activeTab, setActiveTab] = useState<'personalizacao' | 'jornada' | 'backup' | 'sistema'>('personalizacao');
+  const [activeTab, setActiveTab] = useState<'perfil' | 'jornada' | 'backup' | 'sistema'>('perfil');
 
   const sections = [
-    { key: 'personalizacao', label: '🎨 Personalização' },
+    { key: 'perfil', label: '🏢 Meu Perfil & Marca' },
     { key: 'jornada', label: '⏱ Jornada de Trabalho' },
     { key: 'backup', label: '📥 Exportar & 📤 Importar Backup' },
     { key: 'sistema', label: 'ℹ️ Informações do Sistema' },
   ] as const;
 
   const sectionTitles: Record<typeof activeTab, string> = {
-    personalizacao: 'Personalização do Sistema',
+    perfil: 'Meu Perfil Corporativo',
     jornada: 'Jornada de Trabalho',
     backup: 'Exportar & Importar Backup',
     sistema: 'Informações do Sistema',
@@ -336,10 +337,18 @@ const ConfiguracoesPage = ({ db, onRefresh, customLogo, onLogoChange }: Configur
           </div>
 
           <div className="space-y-6">
-            {activeTab === 'personalizacao' && (
+            {activeTab === 'perfil' && (
               <div className="space-y-6">
+                
+                {/* 1. SEÇÃO DE INFORMAÇÕES DA EMPRESA */}
                 <div className="rounded-lg border border-border bg-card p-6 shadow-sm">
-                  <h3 className="font-semibold text-card-foreground mb-4">🎨 Personalização</h3>
+                  <h3 className="font-semibold text-card-foreground mb-4">🏢 Informações Cadastrais</h3>
+                  <CompanyProfileSection />
+                </div>
+
+                {/* 2. SEÇÃO DE PERSONALIZAÇÃO E CORES (ANTIGA) */}
+                <div className="rounded-lg border border-border bg-card p-6 shadow-sm border-t-4 border-t-primary/20">
+                  <h3 className="font-semibold text-card-foreground mb-4">🎨 Logo e Identidade Visual</h3>
                   <div className="space-y-4">
                     <div>
                       <label className="block text-sm font-medium text-muted-foreground mb-2">Logotipo da Barra Lateral</label>

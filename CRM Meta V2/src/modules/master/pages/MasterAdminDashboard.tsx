@@ -3,10 +3,42 @@ import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { toast } from "sonner";
 import { Building2, Users, CreditCard, Plus, Search } from "lucide-react";
-import ManageTenantModal, { Tenant } from "./ManageTenantModal";
+import ManageTenantModal from "../components/ManageTenantModal";
 
+export interface TenantSubscription {
+  id: string;
+  status: string;
+  payment_status: string;
+  next_billing_date: string;
+  plans: {
+    id: string;
+    name: string;
+    price: number;
+  };
+}
+
+export interface Tenant {
+  id: string;
+  name: string;
+  plan: string;
+  status: string;
+  created_at: string;
+  telefone?: string;
+  whatsapp?: string;
+  email?: string;
+  documento?: string;
+  endereco?: string;
+  invite_code?: string;
+  invite_code_used?: boolean;
+  razao_social?: string;
+  nome_fantasia?: string;
+  inscricao_estadual?: string;
+  data_abertura_nascimento?: string;
+  subscriptions?: TenantSubscription[];
+}
 
 const MasterAdminDashboard = () => {
   const [tenants, setTenants] = useState<Tenant[]>([]);
@@ -21,11 +53,17 @@ const MasterAdminDashboard = () => {
     try {
       const { data, error } = await supabase
         .from('tenants')
-        .select('*')
+        .select(`
+          *,
+          subscriptions (
+            id, status, payment_status, next_billing_date,
+            plans ( id, name, price )
+          )
+        `)
         .order('created_at', { ascending: false });
       
       if (error) throw error;
-      setTenants(data || []);
+      setTenants((data as any) || []);
     } catch (err: any) {
       toast.error("Erro ao carregar empresas: " + err.message);
     } finally {
@@ -38,7 +76,8 @@ const MasterAdminDashboard = () => {
     try {
       const { error } = await supabase
         .from('tenants')
-        .insert([{ name: newTenantName }]);
+        .insert([{ name: newTenantName }])
+        .select();
       
       if (error) throw error;
       toast.success("Empresa cadastrada com sucesso!");
@@ -59,16 +98,35 @@ const MasterAdminDashboard = () => {
   };
 
   const filteredTenants = tenants.filter(t => 
-    t.name.toLowerCase().includes(searchQuery.toLowerCase())
+    (t.name || "").toLowerCase().includes((searchQuery || "").toLowerCase())
   );
 
   const calculateRevenue = () => {
     return tenants.filter(t => t.status === 'active').reduce((total, t) => {
-      if (t.plan === 'basico') return total + 47;
-      if (t.plan === 'pro') return total + 97;
+      // Prioriza a tabela real de faturamento, caso contrário usa fallback antigo
+      if (t.subscriptions && t.subscriptions.length > 0) {
+        const activeSub = t.subscriptions.find(s => s.status === 'active' || s.status === 'trial');
+        if (activeSub && activeSub.plans) {
+          return total + Number(activeSub.plans.price);
+        }
+      } else {
+        const planStr = (t.plan || "").toLowerCase();
+        if (planStr === 'basico') return total + 47;
+        if (planStr === 'pro') return total + 97;
+      }
       return total;
     }, 0);
   };
+
+  const newTenantsCount = tenants.filter(t => {
+    if (!t.created_at) return false;
+    const diffDays = (new Date().getTime() - new Date(t.created_at).getTime()) / (1000 * 3600 * 24);
+    return diffDays <= 7;
+  }).length;
+
+  const churnRate = tenants.length 
+    ? ((tenants.filter(t => t.status === 'suspended').length / tenants.length) * 100).toFixed(1) 
+    : 0;
 
   return (
     <div className="space-y-6">
@@ -98,7 +156,7 @@ const MasterAdminDashboard = () => {
         </div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-4 md:grid-cols-5">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Total de Empresas</CardTitle>
@@ -119,11 +177,28 @@ const MasterAdminDashboard = () => {
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Faturamento Estimado</CardTitle>
-            <CreditCard className="h-4 w-4 text-muted-foreground" />
+            <CardTitle className="text-sm font-medium">MRR (Recorrente)</CardTitle>
+            <CreditCard className="h-4 w-4 text-blue-500" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">R$ {calculateRevenue().toFixed(2).replace('.', ',')}</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Novos (7 dias)</CardTitle>
+            <Users className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-emerald-600">+{newTenantsCount}</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Churn Rate</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-red-500">{churnRate}%</div>
           </CardContent>
         </Card>
       </div>
@@ -139,36 +214,40 @@ const MasterAdminDashboard = () => {
             <p className="text-center py-10 text-muted-foreground">Nenhuma empresa encontrada no sistema.</p>
           ) : (
             <div className="border rounded-md">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b bg-muted/50">
-                    <th className="p-3 text-left">Nome da Empresa</th>
-                    <th className="p-3 text-left">Plano</th>
-                    <th className="p-3 text-left">Status</th>
-                    <th className="p-3 text-left">Data de Cadastro</th>
-                    <th className="p-3 text-right">Ações</th>
-                  </tr>
-                </thead>
-                <tbody>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Nome da Empresa</TableHead>
+                    <TableHead>Plano</TableHead>
+                    <TableHead>Status Geral</TableHead>
+                    <TableHead>Pagamento</TableHead>
+                    <TableHead>Data de Cadastro</TableHead>
+                    <TableHead className="text-right">Ações</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
                   {filteredTenants.map((t) => (
-                    <tr key={t.id} className="border-b">
-                      <td className="p-3 font-medium">{t.name}</td>
-                      <td className="p-3 capitalize">{t.plan}</td>
-                      <td className="p-3">
-                        <span className={`px-2 py-1 rounded-full text-xs ${t.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                    <TableRow key={t.id}>
+                      <TableCell className="font-medium">{t.name}</TableCell>
+                      <TableCell className="capitalize">{t.plan}</TableCell>
+                      <TableCell>
+                        <span className={`px-2 py-1 rounded text-xs font-medium ${t.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
                           {t.status === 'active' ? 'Ativa' : 'Suspensa'}
                         </span>
-                      </td>
-                      <td className="p-3 text-muted-foreground">
-                        {new Date(t.created_at).toLocaleDateString('pt-BR')}
-                      </td>
-                      <td className="p-3 text-right">
+                      </TableCell>
+                      <TableCell>
+                        <span className={`px-2 py-1 rounded text-xs font-medium ${(!t.subscriptions || t.subscriptions.length === 0 || t.subscriptions[0].payment_status === 'paid') ? 'bg-blue-100 text-blue-700' : 'bg-orange-100 text-orange-700'}`}>
+                          {(!t.subscriptions || t.subscriptions.length === 0 || t.subscriptions[0].payment_status === 'paid') ? 'Em Dia' : 'Pendente / Atrasado'}
+                        </span>
+                      </TableCell>
+                      <TableCell>{new Date(t.created_at).toLocaleDateString('pt-BR')}</TableCell>
+                      <TableCell className="text-right">
                         <Button variant="outline" size="sm" onClick={() => openManageModal(t)}>Gerenciar</Button>
-                      </td>
-                    </tr>
+                      </TableCell>
+                    </TableRow>
                   ))}
-                </tbody>
-              </table>
+                </TableBody>
+              </Table>
             </div>
           )}
         </CardContent>

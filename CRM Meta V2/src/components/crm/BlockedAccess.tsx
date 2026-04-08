@@ -1,6 +1,6 @@
 import { LogOut, AlertOctagon } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { useAuth } from "@/hooks/useAuth";
+import { useAuth } from "@/modules/auth/hooks/useAuth";
 
 const BlockedAccess = () => {
   const { signOut, user } = useAuth();
