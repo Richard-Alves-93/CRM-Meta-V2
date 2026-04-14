@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { Calendar, dateFnsLocalizer } from 'react-big-calendar';
 import { format, parse, startOfWeek, getDay } from 'date-fns';
 import { setDefaultOptions } from 'date-fns';
@@ -6,8 +6,9 @@ import { ptBR } from 'date-fns/locale';
 import 'react-big-calendar/lib/css/react-big-calendar.css';
 
 import { transporteService } from '@/services/transporteService';
+import { supabase } from '@/integrations/supabase/client';
 import { Transporte } from '@/lib/types';
-import { MapPin, MessageCircle, Truck, Plus } from 'lucide-react';
+import { MapPin, MessageCircle, Truck, Plus, RefreshCcw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { toast } from 'sonner';
@@ -33,8 +34,10 @@ export default function AgendaTransportePage() {
   const [selectedEvent, setSelectedEvent] = useState<Transporte | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
 
-  const carregarTransportes = async () => {
-    setLoading(true);
+  const [realtimeAtivo, setRealtimeAtivo] = useState(false);
+
+  const carregarTransportes = useCallback(async (silencioso = false) => {
+    if (!silencioso) setLoading(true);
     try {
       const data = await transporteService.fetchTransportes();
       setTransportes(data);
@@ -43,11 +46,29 @@ export default function AgendaTransportePage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     carregarTransportes();
-  }, []);
+
+    // Realtime: atualiza o calendário quando o motorista muda o status
+    const channel = supabase
+      .channel('agenda-transportes')
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'transportes',
+      }, () => {
+        carregarTransportes(true);
+      })
+      .subscribe((status) => {
+        setRealtimeAtivo(status === 'SUBSCRIBED');
+      });
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [carregarTransportes]);
 
   const openWaze = (endereco: string | null) => {
     if (!endereco) return toast.error("Endereço não informado.");
@@ -88,19 +109,32 @@ export default function AgendaTransportePage() {
 
   return (
     <div className="h-full flex flex-col gap-4 bg-card rounded-lg border border-border p-4 shadow-sm animate-fade-in relative z-10 min-h-[700px]">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-border pb-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-border pb-4">
         <div className="flex items-center gap-3">
           <div className="bg-primary/10 p-2 rounded-md">
             <Truck className="w-5 h-5 text-primary" />
           </div>
           <div>
-            <h1 className="text-xl font-semibold tracking-tight">Agenda de Transportes</h1>
+            <div className="flex items-center gap-2">
+              <h1 className="text-xl font-semibold tracking-tight">Agenda de Transportes</h1>
+              {realtimeAtivo && (
+                <span className="flex items-center gap-1 text-[10px] font-semibold text-green-600 bg-green-100 dark:bg-green-900/30 dark:text-green-400 px-2 py-0.5 rounded-full">
+                  <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
+                  Ao vivo
+                </span>
+              )}
+            </div>
             <p className="text-sm text-muted-foreground">Controle logístico de buscas e entregas</p>
           </div>
         </div>
-        <Button onClick={() => setIsModalOpen(true)} className="gap-2">
-          <Plus className="w-4 h-4" /> Agendar Transporte
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="outline" size="sm" onClick={() => carregarTransportes()} className="gap-2">
+            <RefreshCcw className="w-4 h-4" /> Atualizar
+          </Button>
+          <Button onClick={() => setIsModalOpen(true)} className="gap-2">
+            <Plus className="w-4 h-4" /> Agendar Transporte
+          </Button>
+        </div>
       </div>
 
       <div className="flex-1 min-h-[500px]">
