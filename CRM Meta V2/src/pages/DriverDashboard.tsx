@@ -116,32 +116,32 @@ export default function DriverDashboard() {
       if (!session.session?.user) return;
 
       // Busca o tenant_id do profile do motorista
-      const { data: profile } = await supabase
+      const { data: profile, error: profileErr } = await supabase
         .from('profiles')
         .select('tenant_id')
         .eq('user_id', session.session.user.id)
         .single();
 
+      console.log('[DriverDashboard] profile:', profile, profileErr);
       if (!profile?.tenant_id) return;
 
-      // Busca primary_color e logo do tenant
-      const { data: tenant } = await (supabase
+      // Busca apenas primary_color do tenant (logo_url não existe na tabela tenants)
+      const { data: tenant, error: tenantErr } = await (supabase
         .from('tenants')
-        .select('primary_color, logo_url') as any)
+        .select('primary_color') as any)
         .eq('id', profile.tenant_id)
         .single();
 
+      console.log('[DriverDashboard] tenant:', tenant, tenantErr);
+
       if (tenant?.primary_color) {
+        console.log('[DriverDashboard] Aplicando cor do tenant:', tenant.primary_color);
         applyPrimaryColor(tenant.primary_color);
-      }
-      if (tenant?.logo_url && !customLogo) {
-        setCustomLogo(tenant.logo_url);
-        localStorage.setItem('crm_custom_logo', tenant.logo_url);
       }
     };
 
     carregarCorDoTenant();
-  }, [applyPrimaryColor, customLogo]);
+  }, [applyPrimaryColor]);
 
   // ── Dados ───────────────────────────────────────────────────────────────
 
