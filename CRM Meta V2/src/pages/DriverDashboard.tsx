@@ -9,6 +9,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useTheme } from '@/hooks/useTheme';
 import { toast } from 'sonner';
 import { APP_VERSION } from '@/config/version';
+import { hexToHslStr } from '@/lib/colors';
 import {
   LogOut, MapPin, MessageCircle, Clock, Truck,
   CheckCircle, RefreshCcw, AlertCircle, Navigation,
@@ -71,6 +72,30 @@ export default function DriverDashboard() {
   const { theme, toggleTheme } = useTheme();
 
   const primeiroNome = (user?.user_metadata?.full_name || user?.email || 'Motorista').split(' ')[0];
+
+  // ── Logo e cor personalizada (mesmo padrão do sistema principal) ──────
+  const [customLogo, setCustomLogo] = useState<string | null>(
+    () => localStorage.getItem('crm_custom_logo')
+  );
+
+  useEffect(() => {
+    // Carrega logo do user metadata (caso tenha sido configurado pelo admin)
+    const userLogo = user?.user_metadata?.logo_url;
+    if (userLogo && userLogo !== customLogo) {
+      setCustomLogo(userLogo);
+      localStorage.setItem('crm_custom_logo', userLogo);
+    }
+  }, [user, customLogo]);
+
+  useEffect(() => {
+    // Aplica cor primária personalizada na inicialização
+    const savedColor = localStorage.getItem('crm_custom_primary_color');
+    if (savedColor) {
+      document.documentElement.style.setProperty('--primary', hexToHslStr(savedColor));
+      document.documentElement.style.setProperty('--ring', hexToHslStr(savedColor));
+      document.documentElement.style.setProperty('--sidebar-primary', hexToHslStr(savedColor));
+    }
+  }, []);
 
   // ── Dados ───────────────────────────────────────────────────────────────
 
@@ -151,11 +176,18 @@ export default function DriverDashboard() {
         fixed left-0 top-0 h-screen w-[220px] bg-card border-r border-border flex flex-col justify-between z-50 transition-transform duration-300
         ${sidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
       `}>
-        {/* Logo */}
-        <div className="flex items-center justify-between px-5 py-6 h-[80px] border-b border-border">
-          <div className="flex items-center gap-2">
-            <Truck className="w-5 h-5 text-primary" />
-            <span className="font-bold text-sm text-foreground">CRM Dominus</span>
+        {/* Logo — mesmo padrão do CrmSidebar */}
+        <div className="flex items-center justify-between px-5 py-5 h-[80px] border-b border-border">
+          <div className="flex items-center gap-2 cursor-pointer" onClick={() => setSidebarOpen(false)}>
+            {customLogo ? (
+              <img src={customLogo} alt="Logo CRM" className="max-h-10 w-auto max-w-[160px] object-contain" />
+            ) : (
+              <img
+                src="/logo-full.png"
+                alt="CRM Pets Logo"
+                className="max-h-9 w-auto max-w-full object-contain brightness-0 dark:brightness-100 invert-1 dark:invert-0"
+              />
+            )}
           </div>
           <button className="md:hidden text-muted-foreground hover:text-foreground" onClick={() => setSidebarOpen(false)}>
             <X size={18} />
