@@ -74,7 +74,7 @@ export default function DriverDashboard() {
       const data = await transporteService.fetchMeusTransportes();
       setTransportes(data);
     } catch (err: any) {
-      toast.error('Erro ao buscar corridas: ' + err.message);
+      toast.error('Erro ao buscar Teles: ' + err.message);
     } finally {
       setLoading(false);
     }
@@ -115,7 +115,7 @@ export default function DriverDashboard() {
       toast.success('Status atualizado!');
       await carregarTransportes(true);
     } catch (err: any) {
-      toast.error('Erro ao atualizar: ' + err.message);
+      toast.error('Erro ao atualizar Tele: ' + err.message);
     } finally {
       setAtualizando(null);
     }
@@ -147,7 +147,7 @@ export default function DriverDashboard() {
     return (
       <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center gap-3 text-white">
         <Truck className="w-12 h-12 animate-bounce text-blue-400" />
-        <p className="text-slate-400 text-sm">Carregando suas corridas...</p>
+        <p className="text-slate-400 text-sm">Carregando suas Teles...</p>
       </div>
     );
   }
@@ -168,8 +168,8 @@ export default function DriverDashboard() {
           <div className="flex items-center gap-1">
             {/* Contadores */}
             <div className="hidden sm:flex gap-3 mr-3 text-xs text-blue-200">
-              <span>🕐 {ativas.length} pendente{ativas.length !== 1 ? 's' : ''}</span>
-              <span>✅ {conclHoje.length} hoje</span>
+              <span>🕐 {ativas.length} Tele{ativas.length !== 1 ? 's' : ''} pendente{ativas.length !== 1 ? 's' : ''}</span>
+              <span>✅ {conclHoje.length} Tele{conclHoje.length !== 1 ? 's' : ''} hoje</span>
             </div>
             <Button variant="ghost" size="icon" onClick={() => carregarTransportes()} className="text-white hover:bg-white/10 h-8 w-8">
               <RefreshCcw className="w-4 h-4" />
@@ -181,8 +181,8 @@ export default function DriverDashboard() {
         </div>
         {/* Contadores mobile */}
         <div className="flex sm:hidden gap-4 mt-2 text-xs text-blue-200">
-          <span>🕐 {ativas.length} pendente{ativas.length !== 1 ? 's' : ''}</span>
-          <span>✅ {conclHoje.length} concluída{conclHoje.length !== 1 ? 's' : ''} hoje</span>
+          <span>🕐 {ativas.length} Tele{ativas.length !== 1 ? 's' : ''} pendente{ativas.length !== 1 ? 's' : ''}</span>
+          <span>✅ {conclHoje.length} Tele{conclHoje.length !== 1 ? 's' : ''} concluída{conclHoje.length !== 1 ? 's' : ''} hoje</span>
         </div>
       </header>
 
@@ -192,7 +192,7 @@ export default function DriverDashboard() {
         {/* ── PRÓXIMA VIAGEM ─────────────────────── */}
         <section>
           <h2 className="text-slate-400 uppercase text-[10px] font-bold mb-3 tracking-widest">
-            Próxima Corrida
+            Próxima Tele
           </h2>
 
           {proxima ? (
@@ -283,7 +283,7 @@ export default function DriverDashboard() {
           ) : (
             <div className="bg-slate-900 border border-slate-700 rounded-2xl p-8 text-center">
               <CheckCircle className="w-12 h-12 text-emerald-500 mx-auto mb-3" />
-              <p className="text-slate-300 font-medium">Nenhuma corrida pendente 🎉</p>
+              <p className="text-slate-300 font-medium">Nenhuma Tele pendente 🎉</p>
               <p className="text-slate-500 text-sm mt-1">Você está em dia!</p>
             </div>
           )}
@@ -293,7 +293,7 @@ export default function DriverDashboard() {
         {restantes.length > 0 && (
           <section>
             <h2 className="text-slate-400 uppercase text-[10px] font-bold mb-3 tracking-widest">
-              Mais para Hoje
+              Mais Teles de Hoje
             </h2>
             <div className="space-y-2">
               {restantes.map(v => (
@@ -326,7 +326,7 @@ export default function DriverDashboard() {
         {conclHoje.length > 0 && (
           <section>
             <h2 className="text-slate-400 uppercase text-[10px] font-bold mb-3 tracking-widest">
-              Concluídas Hoje
+              Teles Concluídas Hoje
             </h2>
             <div className="space-y-2">
               {conclHoje.map(v => (
@@ -346,7 +346,7 @@ export default function DriverDashboard() {
         {futuras.length > 0 && (
           <section>
             <h2 className="text-slate-400 uppercase text-[10px] font-bold mb-3 tracking-widest">
-              Próximos Dias
+              Teles dos Próximos Dias
             </h2>
             <div className="space-y-2">
               {futuras.map(v => (

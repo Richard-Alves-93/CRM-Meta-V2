@@ -46,10 +46,27 @@ export const transporteService = {
     const { data: session } = await supabase.auth.getSession();
     if (!session.session?.user) throw new Error("Não autenticado");
 
-    // Início do dia de hoje (00:00:00)
+    const authUserId = session.session.user.id;
+
+    // 1. Busca o profile.id do usuário logado (pois motorista_id usa profile.id, não auth.user.id)
+    const { data: profile, error: profileError } = await supabase
+      .from('profiles')
+      .select('id')
+      .eq('user_id', authUserId)
+      .single();
+
+    if (profileError || !profile) {
+      console.warn('[DriverDashboard] Perfil não encontrado para user_id:', authUserId);
+      return [];
+    }
+
+    const profileId = profile.id;
+
+    // 2. Início do dia de hoje (00:00:00)
     const hoje = new Date();
     hoje.setHours(0, 0, 0, 0);
 
+    // 3. Busca transportes onde motorista_id = profile.id (de hoje em diante)
     const { data, error } = await supabase
       .from('transportes')
       .select(`
@@ -65,7 +82,7 @@ export const transporteService = {
         ),
         motorista:profiles!transportes_motorista_id_fkey (display_name)
       `)
-      .eq('motorista_id', session.session.user.id)
+      .eq('motorista_id', profileId)
       .gte('data_hora', hoje.toISOString())
       .order('data_hora', { ascending: true });
 
