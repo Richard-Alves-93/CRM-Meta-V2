@@ -2,30 +2,35 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { transporteService } from '@/services/transporteService';
 import { Transporte, TransporteStatus } from '@/lib/types';
 import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
 import { useAuth } from '@/modules/auth/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
+import { useTheme } from '@/hooks/useTheme';
 import { toast } from 'sonner';
+import { APP_VERSION } from '@/config/version';
 import {
   LogOut, MapPin, MessageCircle, Clock, Truck,
-  CheckCircle, RefreshCcw, AlertCircle, Package, Navigation
+  CheckCircle, RefreshCcw, AlertCircle, Navigation,
+  Sun, Moon, Menu, X, Package
 } from 'lucide-react';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-const statusColors: Record<TransporteStatus, string> = {
-  AGUARDANDO:  'bg-amber-100 text-amber-800 border-amber-200',
-  A_CAMINHO:   'bg-blue-100 text-blue-800 border-blue-200',
-  CONCLUIDO:   'bg-emerald-100 text-emerald-800 border-emerald-200',
-  CANCELADO:   'bg-red-100 text-red-800 border-red-200',
-  REAGENDADO:  'bg-orange-100 text-orange-800 border-orange-200',
+const statusVariant: Record<TransporteStatus, 'default' | 'secondary' | 'destructive' | 'outline'> = {
+  AGUARDANDO:  'secondary',
+  A_CAMINHO:   'default',
+  CONCLUIDO:   'outline',
+  CANCELADO:   'destructive',
+  REAGENDADO:  'secondary',
 };
 
 const statusLabels: Record<TransporteStatus, string> = {
-  AGUARDANDO:  '⏳ Aguardando',
-  A_CAMINHO:   '🚗 A Caminho',
-  CONCLUIDO:   '✅ Concluído',
-  CANCELADO:   '❌ Cancelado',
-  REAGENDADO:  '🔄 Reagendado',
+  AGUARDANDO:  'Aguardando',
+  A_CAMINHO:   'A Caminho',
+  CONCLUIDO:   'Concluído',
+  CANCELADO:   'Cancelado',
+  REAGENDADO:  'Reagendado',
 };
 
 const getSaudacao = () => {
@@ -43,15 +48,15 @@ const isHoje = (dataHora: string) => {
 
 const isUrgente = (dataHora: string) => {
   const diff = new Date(dataHora).getTime() - Date.now();
-  return diff > 0 && diff < 60 * 60 * 1000; // menos de 1h
+  return diff > 0 && diff < 60 * 60 * 1000;
 };
 
 const formatHora = (dataHora: string) =>
   new Date(dataHora).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
 
 const formatDataHora = (dataHora: string) => {
-  const d = new Date(dataHora);
   if (isHoje(dataHora)) return `Hoje às ${formatHora(dataHora)}`;
+  const d = new Date(dataHora);
   return d.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' }) + ' às ' + formatHora(dataHora);
 };
 
@@ -61,12 +66,13 @@ export default function DriverDashboard() {
   const [transportes, setTransportes] = useState<Transporte[]>([]);
   const [loading, setLoading] = useState(true);
   const [atualizando, setAtualizando] = useState<string | null>(null);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const { signOut, user } = useAuth();
+  const { theme, toggleTheme } = useTheme();
 
-  const primeiroNome = (user?.user_metadata?.full_name || user?.email || 'Motorista')
-    .split(' ')[0];
+  const primeiroNome = (user?.user_metadata?.full_name || user?.email || 'Motorista').split(' ')[0];
 
-  // ── Carga de dados ──────────────────────────────────────────────────────
+  // ── Dados ───────────────────────────────────────────────────────────────
 
   const carregarTransportes = useCallback(async (silencioso = false) => {
     if (!silencioso) setLoading(true);
@@ -80,23 +86,16 @@ export default function DriverDashboard() {
     }
   }, []);
 
-  // ── Realtime Subscription ─────────────────────────────────────────────
-
   useEffect(() => {
     carregarTransportes();
 
     const channel = supabase
       .channel('driver-transportes')
-      .on('postgres_changes', {
-        event: '*',
-        schema: 'public',
-        table: 'transportes',
-      }, () => {
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'transportes' }, () => {
         carregarTransportes(true);
       })
       .subscribe();
 
-    // Refetch ao voltar para a aba
     const onFocus = () => carregarTransportes(true);
     window.addEventListener('focus', onFocus);
 
@@ -129,7 +128,7 @@ export default function DriverDashboard() {
   const openWhatsApp = (numero: string | null, petNome: string) => {
     if (!numero) return toast.error('Telefone não informado.');
     const limpo = numero.replace(/\D/g, '');
-    const msg = encodeURIComponent(`Olá! Sou o motorista do CRM Dominus e estou a caminho para buscar ${petNome}. 🐾`);
+    const msg = encodeURIComponent(`Olá! O motorista do CRM Dominus está a caminho para buscar ${petNome}. 🐾`);
     window.open(`https://wa.me/55${limpo}?text=${msg}`, '_blank');
   };
 
@@ -141,230 +140,277 @@ export default function DriverDashboard() {
   const restantes = ativas.slice(1);
   const futuras   = transportes.filter(t => !['AGUARDANDO', 'A_CAMINHO'].includes(t.status) && !isHoje(t.data_hora));
 
-  // ── Render ─────────────────────────────────────────────────────────────
+  // ── Sidebar simplificada do motorista ────────────────────────────────
+
+  const Sidebar = () => (
+    <>
+      {sidebarOpen && (
+        <div className="fixed inset-0 bg-black/50 z-40 md:hidden" onClick={() => setSidebarOpen(false)} />
+      )}
+      <aside className={`
+        fixed left-0 top-0 h-screen w-[220px] bg-card border-r border-border flex flex-col justify-between z-50 transition-transform duration-300
+        ${sidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
+      `}>
+        {/* Logo */}
+        <div className="flex items-center justify-between px-5 py-6 h-[80px] border-b border-border">
+          <div className="flex items-center gap-2">
+            <Truck className="w-5 h-5 text-primary" />
+            <span className="font-bold text-sm text-foreground">CRM Dominus</span>
+          </div>
+          <button className="md:hidden text-muted-foreground hover:text-foreground" onClick={() => setSidebarOpen(false)}>
+            <X size={18} />
+          </button>
+        </div>
+
+        {/* Nav */}
+        <nav className="flex flex-col gap-1 px-3 flex-1 pt-4">
+          <div className="flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-semibold bg-primary/10 text-primary">
+            <Truck size={18} />
+            Minhas Teles
+          </div>
+
+          {/* Contadores rápidos */}
+          <div className="mt-3 px-4 space-y-2">
+            <div className="flex items-center justify-between text-xs text-muted-foreground">
+              <span>Pendentes</span>
+              <Badge variant="secondary" className="text-xs">{ativas.length}</Badge>
+            </div>
+            <div className="flex items-center justify-between text-xs text-muted-foreground">
+              <span>Concluídas hoje</span>
+              <Badge variant="outline" className="text-xs">{conclHoje.length}</Badge>
+            </div>
+          </div>
+        </nav>
+
+        {/* Footer */}
+        <div className="px-4 pb-5 pt-3 border-t border-border space-y-2">
+          <div className="flex items-center gap-2 px-1 text-xs text-muted-foreground mb-2">
+            <div className="w-6 h-6 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold text-[10px]">
+              {primeiroNome[0]?.toUpperCase()}
+            </div>
+            <span className="truncate">{primeiroNome}</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground" onClick={toggleTheme} title="Alternar tema">
+              {theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}
+            </Button>
+            <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground" onClick={() => carregarTransportes()} title="Recarregar">
+              <RefreshCcw size={15} />
+            </Button>
+            <Button variant="ghost" size="sm" className="flex-1 gap-2 text-muted-foreground hover:text-destructive justify-start px-2 h-8" onClick={signOut}>
+              <LogOut size={14} />
+              <span className="text-xs">Sair</span>
+            </Button>
+          </div>
+          <p className="text-[10px] text-muted-foreground text-center pt-1">V {APP_VERSION}</p>
+        </div>
+      </aside>
+    </>
+  );
+
+  // ── Loading ────────────────────────────────────────────────────────────
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center gap-3 text-white">
-        <Truck className="w-12 h-12 animate-bounce text-blue-400" />
-        <p className="text-slate-400 text-sm">Carregando suas Teles...</p>
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="flex flex-col items-center gap-3 text-muted-foreground">
+          <Truck className="w-10 h-10 animate-bounce text-primary" />
+          <p className="text-sm">Carregando suas Teles...</p>
+        </div>
       </div>
     );
   }
 
+  // ── Render ─────────────────────────────────────────────────────────────
+
   return (
-    <div className="min-h-screen bg-slate-950 text-white flex flex-col">
+    <div className="min-h-screen bg-background flex">
+      <Sidebar />
 
-      {/* ── Header ─────────────────────────────────── */}
-      <header className="bg-gradient-to-r from-blue-700 to-blue-900 px-4 py-3 shadow-lg">
-        <div className="max-w-2xl mx-auto flex items-center justify-between">
+      {/* Conteúdo principal */}
+      <div className="flex-1 md:ml-[220px] flex flex-col">
+
+        {/* Header mobile */}
+        <header className="md:hidden flex items-center justify-between px-4 py-3 bg-card border-b border-border">
+          <button onClick={() => setSidebarOpen(true)} className="text-muted-foreground hover:text-foreground">
+            <Menu size={22} />
+          </button>
+          <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+            <Truck className="w-4 h-4 text-primary" />
+            Minhas Teles
+          </div>
+          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => carregarTransportes()}>
+            <RefreshCcw size={16} />
+          </Button>
+        </header>
+
+        {/* Conteúdo */}
+        <main className="flex-1 p-4 md:p-6 space-y-6 max-w-3xl">
+
+          {/* Saudação */}
           <div>
-            <div className="flex items-center gap-2">
-              <Truck className="w-5 h-5" />
-              <span className="font-bold text-base">Painel do Motorista</span>
-            </div>
-            <p className="text-blue-200 text-xs mt-0.5">{getSaudacao()}, {primeiroNome}! 👋</p>
+            <h1 className="text-xl font-semibold text-foreground">{getSaudacao()}, {primeiroNome}! 👋</h1>
+            <p className="text-sm text-muted-foreground mt-0.5">
+              {ativas.length > 0
+                ? `Você tem ${ativas.length} Tele${ativas.length > 1 ? 's' : ''} pendente${ativas.length > 1 ? 's' : ''} hoje`
+                : 'Nenhuma Tele pendente. Você está em dia!'}
+            </p>
           </div>
-          <div className="flex items-center gap-1">
-            {/* Contadores */}
-            <div className="hidden sm:flex gap-3 mr-3 text-xs text-blue-200">
-              <span>🕐 {ativas.length} Tele{ativas.length !== 1 ? 's' : ''} pendente{ativas.length !== 1 ? 's' : ''}</span>
-              <span>✅ {conclHoje.length} Tele{conclHoje.length !== 1 ? 's' : ''} hoje</span>
-            </div>
-            <Button variant="ghost" size="icon" onClick={() => carregarTransportes()} className="text-white hover:bg-white/10 h-8 w-8">
-              <RefreshCcw className="w-4 h-4" />
-            </Button>
-            <Button variant="ghost" size="icon" onClick={signOut} className="text-white hover:bg-white/10 h-8 w-8">
-              <LogOut className="w-4 h-4" />
-            </Button>
-          </div>
-        </div>
-        {/* Contadores mobile */}
-        <div className="flex sm:hidden gap-4 mt-2 text-xs text-blue-200">
-          <span>🕐 {ativas.length} Tele{ativas.length !== 1 ? 's' : ''} pendente{ativas.length !== 1 ? 's' : ''}</span>
-          <span>✅ {conclHoje.length} Tele{conclHoje.length !== 1 ? 's' : ''} concluída{conclHoje.length !== 1 ? 's' : ''} hoje</span>
-        </div>
-      </header>
 
-      {/* ── Conteúdo ───────────────────────────────── */}
-      <main className="flex-1 px-4 py-5 max-w-2xl mx-auto w-full space-y-6">
+          {/* ── Próxima Tele ─────────────────── */}
+          <section>
+            <h2 className="text-xs font-bold text-muted-foreground uppercase tracking-widest mb-3">Próxima Tele</h2>
 
-        {/* ── PRÓXIMA VIAGEM ─────────────────────── */}
-        <section>
-          <h2 className="text-slate-400 uppercase text-[10px] font-bold mb-3 tracking-widest">
-            Próxima Tele
-          </h2>
-
-          {proxima ? (
-            <div className={`rounded-2xl border overflow-hidden shadow-xl ${isUrgente(proxima.data_hora) ? 'border-amber-400 animate-pulse' : 'border-slate-700'} bg-slate-900`}>
-              {/* Topo colorido por tipo */}
-              <div className={`h-1.5 w-full ${proxima.tipo === 'BUSCA' ? 'bg-blue-500' : 'bg-orange-500'}`} />
-
-              <div className="p-4 space-y-4">
-                {/* Cabeçalho */}
-                <div className="flex justify-between items-start">
-                  <div>
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${proxima.tipo === 'BUSCA' ? 'bg-blue-900 text-blue-300' : 'bg-orange-900 text-orange-300'}`}>
-                        {proxima.tipo === 'BUSCA' ? '🐾 Busca' : '📦 Entrega'}
-                      </span>
-                      {isUrgente(proxima.data_hora) && (
-                        <span className="text-[10px] text-amber-400 font-bold flex items-center gap-1">
-                          <AlertCircle className="w-3 h-3" /> Urgente!
+            {proxima ? (
+              <Card className={`border-2 ${isUrgente(proxima.data_hora) ? 'border-amber-400 animate-pulse' : 'border-primary/20'} shadow-md`}>
+                <div className={`h-1 w-full rounded-t-xl ${proxima.tipo === 'BUSCA' ? 'bg-blue-500' : 'bg-orange-500'}`} />
+                <CardHeader className="pb-2 pt-4">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${proxima.tipo === 'BUSCA' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300' : 'bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300'}`}>
+                          {proxima.tipo === 'BUSCA' ? '🐾 Busca' : '📦 Entrega'}
                         </span>
-                      )}
+                        {isUrgente(proxima.data_hora) && (
+                          <span className="text-[10px] text-amber-500 font-bold flex items-center gap-1">
+                            <AlertCircle className="w-3 h-3" /> Urgente
+                          </span>
+                        )}
+                      </div>
+                      <CardTitle className="text-lg">{proxima.pet_nome}</CardTitle>
+                      <p className="text-sm text-muted-foreground">{proxima.cliente_nome}</p>
                     </div>
-                    <h3 className="text-xl font-bold text-white">{proxima.pet_nome}</h3>
-                    <p className="text-slate-400 text-sm">{proxima.cliente_nome}</p>
+                    <Badge variant={statusVariant[proxima.status]}>{statusLabels[proxima.status]}</Badge>
                   </div>
-                  <span className={`text-[10px] font-semibold px-2 py-1 rounded-full border ${statusColors[proxima.status]}`}>
-                    {statusLabels[proxima.status]}
-                  </span>
-                </div>
-
-                {/* Info */}
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2 text-sm text-slate-300">
-                    <Clock className="w-4 h-4 text-slate-500 flex-shrink-0" />
-                    <span>{formatDataHora(proxima.data_hora)}</span>
-                  </div>
-                  <div className="flex items-start gap-2 text-sm text-slate-300">
-                    <MapPin className="w-4 h-4 text-slate-500 flex-shrink-0 mt-0.5" />
-                    <span className="leading-snug">{proxima.endereco_transporte || 'Endereço não cadastrado'}</span>
-                  </div>
-                  {proxima.observacoes && (
-                    <div className="text-xs text-slate-500 bg-slate-800 rounded-lg p-2 mt-1">
-                      📝 {proxima.observacoes}
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <Clock className="w-4 h-4 flex-shrink-0" />
+                      <span>{formatDataHora(proxima.data_hora)}</span>
                     </div>
-                  )}
-                </div>
+                    <div className="flex items-start gap-2 text-sm text-muted-foreground">
+                      <MapPin className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                      <span className="leading-snug">{proxima.endereco_transporte || 'Endereço não cadastrado'}</span>
+                    </div>
+                    {proxima.observacoes && (
+                      <div className="text-xs text-muted-foreground bg-secondary rounded-lg p-2">
+                        📝 {proxima.observacoes}
+                      </div>
+                    )}
+                  </div>
 
-                {/* Ações de comunicação */}
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    onClick={() => openWaze(proxima.endereco_transporte)}
-                    className="flex items-center justify-center gap-2 rounded-xl border border-slate-600 bg-slate-800 hover:bg-slate-700 text-white py-2.5 text-sm font-medium transition-colors"
-                  >
-                    <Navigation className="w-4 h-4 text-blue-400" /> Navegar
-                  </button>
-                  <button
-                    onClick={() => openWhatsApp(proxima.cliente_whatsapp, proxima.pet_nome)}
-                    className="flex items-center justify-center gap-2 rounded-xl border border-emerald-800 bg-emerald-900/40 hover:bg-emerald-900/70 text-emerald-400 py-2.5 text-sm font-medium transition-colors"
-                  >
-                    <MessageCircle className="w-4 h-4" /> Avisar
-                  </button>
-                </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <Button variant="outline" className="gap-2" onClick={() => openWaze(proxima.endereco_transporte)}>
+                      <Navigation className="w-4 h-4" /> Navegar
+                    </Button>
+                    <Button variant="outline" className="gap-2 text-green-600 hover:text-green-700 hover:bg-green-50 dark:hover:bg-green-900/20" onClick={() => openWhatsApp(proxima.cliente_whatsapp || null, proxima.pet_nome)}>
+                      <MessageCircle className="w-4 h-4" /> Avisar
+                    </Button>
+                  </div>
 
-                {/* Ação de status */}
-                <div className="pt-2 border-t border-slate-700">
-                  {proxima.status === 'AGUARDANDO' && (
-                    <button
-                      disabled={atualizando === proxima.id}
-                      onClick={() => handleStatusChange(proxima.id, 'A_CAMINHO')}
-                      className="w-full py-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm transition-colors disabled:opacity-60 flex items-center justify-center gap-2"
-                    >
-                      <Truck className="w-5 h-5" />
-                      {atualizando === proxima.id ? 'Atualizando...' : 'Sair para o destino'}
-                    </button>
-                  )}
-                  {proxima.status === 'A_CAMINHO' && (
-                    <button
-                      disabled={atualizando === proxima.id}
-                      onClick={() => handleStatusChange(proxima.id, 'CONCLUIDO')}
-                      className="w-full py-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm transition-colors disabled:opacity-60 flex items-center justify-center gap-2"
-                    >
-                      <CheckCircle className="w-5 h-5" />
-                      {atualizando === proxima.id ? 'Finalizando...' : 'Marcar como Concluída'}
-                    </button>
-                  )}
-                </div>
+                  <div className="border-t border-border pt-3">
+                    {proxima.status === 'AGUARDANDO' && (
+                      <Button className="w-full gap-2" size="lg" disabled={atualizando === proxima.id}
+                        onClick={() => handleStatusChange(proxima.id, 'A_CAMINHO')}>
+                        <Truck className="w-4 h-4" />
+                        {atualizando === proxima.id ? 'Atualizando...' : 'Sair para o destino'}
+                      </Button>
+                    )}
+                    {proxima.status === 'A_CAMINHO' && (
+                      <Button className="w-full gap-2 bg-green-600 hover:bg-green-700 text-white" size="lg"
+                        disabled={atualizando === proxima.id}
+                        onClick={() => handleStatusChange(proxima.id, 'CONCLUIDO')}>
+                        <CheckCircle className="w-4 h-4" />
+                        {atualizando === proxima.id ? 'Finalizando...' : 'Marcar como Concluída'}
+                      </Button>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            ) : (
+              <Card>
+                <CardContent className="flex flex-col items-center justify-center py-8 text-center">
+                  <CheckCircle className="w-10 h-10 text-green-500 mb-2" />
+                  <p className="text-foreground font-medium">Nenhuma Tele pendente 🎉</p>
+                  <p className="text-muted-foreground text-sm mt-1">Você está em dia!</p>
+                </CardContent>
+              </Card>
+            )}
+          </section>
+
+          {/* ── Mais Teles de Hoje ─────────── */}
+          {restantes.length > 0 && (
+            <section>
+              <h2 className="text-xs font-bold text-muted-foreground uppercase tracking-widest mb-3">Mais Teles de Hoje</h2>
+              <div className="space-y-2">
+                {restantes.map(v => (
+                  <Card key={v.id} className="shadow-sm">
+                    <CardContent className="flex items-center justify-between gap-3 py-3 px-4">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className={`w-1 h-10 rounded-full flex-shrink-0 ${v.tipo === 'BUSCA' ? 'bg-blue-500' : 'bg-orange-500'}`} />
+                        <div className="min-w-0">
+                          <p className="font-medium text-sm truncate text-foreground">{v.pet_nome} <span className="text-muted-foreground font-normal text-xs">({v.tipo})</span></p>
+                          <p className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
+                            <Clock className="w-3 h-3" /> {formatHora(v.data_hora)}
+                            {isUrgente(v.data_hora) && <span className="text-amber-500 ml-1">⚡</span>}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1 flex-shrink-0">
+                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openWaze(v.endereco_transporte)}>
+                          <Navigation className="w-4 h-4" />
+                        </Button>
+                        <Button variant="ghost" size="icon" className="h-8 w-8 text-green-600" onClick={() => openWhatsApp(v.cliente_whatsapp || null, v.pet_nome)}>
+                          <MessageCircle className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
               </div>
-            </div>
-          ) : (
-            <div className="bg-slate-900 border border-slate-700 rounded-2xl p-8 text-center">
-              <CheckCircle className="w-12 h-12 text-emerald-500 mx-auto mb-3" />
-              <p className="text-slate-300 font-medium">Nenhuma Tele pendente 🎉</p>
-              <p className="text-slate-500 text-sm mt-1">Você está em dia!</p>
-            </div>
+            </section>
           )}
-        </section>
 
-        {/* ── RESTANTES DE HOJE ──────────────────── */}
-        {restantes.length > 0 && (
-          <section>
-            <h2 className="text-slate-400 uppercase text-[10px] font-bold mb-3 tracking-widest">
-              Mais Teles de Hoje
-            </h2>
-            <div className="space-y-2">
-              {restantes.map(v => (
-                <div key={v.id} className="bg-slate-900 border border-slate-700 rounded-xl p-3 flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className={`w-1 h-10 rounded-full flex-shrink-0 ${v.tipo === 'BUSCA' ? 'bg-blue-500' : 'bg-orange-500'}`} />
-                    <div className="min-w-0">
-                      <p className="font-semibold text-sm truncate">{v.pet_nome} <span className="text-slate-500 font-normal text-xs">({v.tipo})</span></p>
-                      <p className="text-xs text-slate-400 flex items-center gap-1 mt-0.5">
-                        <Clock className="w-3 h-3" /> {formatHora(v.data_hora)}
-                        {isUrgente(v.data_hora) && <span className="text-amber-400 ml-1">⚡ Urgente</span>}
-                      </p>
+          {/* ── Teles Concluídas Hoje ──────── */}
+          {conclHoje.length > 0 && (
+            <section>
+              <h2 className="text-xs font-bold text-muted-foreground uppercase tracking-widest mb-3">Teles Concluídas Hoje</h2>
+              <div className="space-y-2">
+                {conclHoje.map(v => (
+                  <div key={v.id} className="flex items-center gap-3 p-3 rounded-lg border border-border bg-card opacity-60">
+                    <CheckCircle className="w-4 h-4 text-green-500 flex-shrink-0" />
+                    <div>
+                      <p className="text-sm font-medium text-foreground">{v.pet_nome}</p>
+                      <p className="text-xs text-muted-foreground">{formatHora(v.data_hora)} • {v.tipo}</p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-1 flex-shrink-0">
-                    <button onClick={() => openWaze(v.endereco_transporte)} className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-blue-400">
-                      <Navigation className="w-4 h-4" />
-                    </button>
-                    <button onClick={() => openWhatsApp(v.cliente_whatsapp, v.pet_nome)} className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-emerald-400">
-                      <MessageCircle className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </section>
-        )}
+                ))}
+              </div>
+            </section>
+          )}
 
-        {/* ── CONCLUÍDAS HOJE ────────────────────── */}
-        {conclHoje.length > 0 && (
-          <section>
-            <h2 className="text-slate-400 uppercase text-[10px] font-bold mb-3 tracking-widest">
-              Teles Concluídas Hoje
-            </h2>
-            <div className="space-y-2">
-              {conclHoje.map(v => (
-                <div key={v.id} className="bg-slate-900/50 border border-slate-800 rounded-xl p-3 flex items-center gap-3 opacity-70">
-                  <CheckCircle className="w-5 h-5 text-emerald-500 flex-shrink-0" />
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium text-slate-300 truncate">{v.pet_nome}</p>
-                    <p className="text-xs text-slate-500">{formatHora(v.data_hora)} • {v.tipo}</p>
+          {/* ── Teles dos Próximos Dias ────── */}
+          {futuras.length > 0 && (
+            <section>
+              <h2 className="text-xs font-bold text-muted-foreground uppercase tracking-widest mb-3">Teles dos Próximos Dias</h2>
+              <div className="space-y-2">
+                {futuras.map(v => (
+                  <div key={v.id} className="flex items-center gap-3 p-3 rounded-lg border border-border bg-card">
+                    <Package className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                    <div>
+                      <p className="text-sm font-medium text-foreground">{v.pet_nome}</p>
+                      <p className="text-xs text-muted-foreground">{formatDataHora(v.data_hora)} • {v.tipo}</p>
+                    </div>
                   </div>
-                </div>
-              ))}
-            </div>
-          </section>
-        )}
+                ))}
+              </div>
+            </section>
+          )}
 
-        {/* ── PRÓXIMOS DIAS ──────────────────────── */}
-        {futuras.length > 0 && (
-          <section>
-            <h2 className="text-slate-400 uppercase text-[10px] font-bold mb-3 tracking-widest">
-              Teles dos Próximos Dias
-            </h2>
-            <div className="space-y-2">
-              {futuras.map(v => (
-                <div key={v.id} className="bg-slate-900 border border-slate-800 rounded-xl p-3 flex items-center gap-3">
-                  <Package className="w-5 h-5 text-slate-500 flex-shrink-0" />
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium text-slate-300 truncate">{v.pet_nome}</p>
-                    <p className="text-xs text-slate-500">{formatDataHora(v.data_hora)} • {v.tipo}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </section>
-        )}
-
-        {/* Espaço para navigation bar mobile */}
-        <div className="h-8" />
-      </main>
+          <div className="h-6" />
+        </main>
+      </div>
     </div>
   );
 }

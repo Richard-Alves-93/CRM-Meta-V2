@@ -88,14 +88,23 @@ export const transporteService = {
 
     if (error) throw error;
 
+    // Diagnóstico: logar o primeiro item para verificar o join
+    if (data && data.length > 0) {
+      console.log('[DriverDashboard] Primeiro transporte raw:', JSON.stringify(data[0], null, 2));
+    } else {
+      console.log('[DriverDashboard] Nenhum transporte encontrado para profileId:', profileId);
+    }
+
     return (data || []).map((item: any) => ({
       ...item,
       tipo: item.tipo as TransporteTipo,
       status: item.status as TransporteStatus,
       motorista_nome: item.motorista?.display_name || 'Eu',
-      pet_nome: item.pet?.nome || 'Pet',
-      cliente_nome: item.pet?.customer?.nome || 'Tutor não informado',
-      cliente_whatsapp: item.pet?.customer?.whatsapp || null,
+      // Tenta pegar pet_nome do join, senão usa valor já salvo (pet_nome denormalizado)
+      pet_nome: item.pet?.nome ?? item.pet_nome ?? 'Pet não informado',
+      // Tenta pegar cliente do join profundo, senão usa fallback vazio
+      cliente_nome: item.pet?.customer?.nome ?? item.cliente_nome ?? 'Tutor não informado',
+      cliente_whatsapp: item.pet?.customer?.whatsapp ?? item.cliente_whatsapp ?? null,
     }));
   },
 
