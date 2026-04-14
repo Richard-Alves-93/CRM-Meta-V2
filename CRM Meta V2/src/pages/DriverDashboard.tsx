@@ -73,7 +73,7 @@ export default function DriverDashboard() {
 
   const primeiroNome = (user?.user_metadata?.full_name || user?.email || 'Motorista').split(' ')[0];
 
-  // ── Logo e cor personalizada (mesmo padrão do sistema principal) ──────
+  // ── Logo e cor personalizada (fonte: tabela tenants) ──────────────────
   const [customLogo, setCustomLogo] = useState<string | null>(
     () => localStorage.getItem('crm_custom_logo')
   );
@@ -83,40 +83,65 @@ export default function DriverDashboard() {
     document.documentElement.style.setProperty('--primary', hexToHslStr(hex));
     document.documentElement.style.setProperty('--ring', hexToHslStr(hex));
     document.documentElement.style.setProperty('--sidebar-primary', hexToHslStr(hex));
+    localStorage.setItem('crm_custom_primary_color', hex);
   }, []);
 
   useEffect(() => {
-    // 1. Tenta carregar cor do localStorage (mesmo browser)
-    const savedColor = localStorage.getItem('crm_custom_primary_color');
-    if (savedColor) applyPrimaryColor(savedColor);
+    // 1. Aplica do cache local imediatamente (evita flash de cor)
+    const saved = localStorage.getItem('crm_custom_primary_color');
+    if (saved) applyPrimaryColor(saved);
 
-    // 2. Ouve mudanças em outras abas (admin muda cor -> motorista atualiza)
+    // 2. Ouve mudanças em outras abas (mesma máquina)
     const onStorage = (e: StorageEvent) => {
-      if (e.key === 'crm_custom_primary_color' && e.newValue) {
-        applyPrimaryColor(e.newValue);
-      }
-      if (e.key === 'crm_custom_logo' && e.newValue) {
-        setCustomLogo(e.newValue);
-      }
+      if (e.key === 'crm_custom_primary_color' && e.newValue) applyPrimaryColor(e.newValue);
+      if (e.key === 'crm_custom_logo' && e.newValue) setCustomLogo(e.newValue);
     };
     window.addEventListener('storage', onStorage);
     return () => window.removeEventListener('storage', onStorage);
   }, [applyPrimaryColor]);
 
   useEffect(() => {
-    // 3. Fallback: busca cor e logo do user_metadata do Supabase (cross-device)
+    // 3. Busca logo do user_metadata (fallback cross-device)
     const userLogo = user?.user_metadata?.logo_url;
-    const userColor = user?.user_metadata?.primary_color;
-
     if (userLogo && userLogo !== customLogo) {
       setCustomLogo(userLogo);
       localStorage.setItem('crm_custom_logo', userLogo);
     }
-    if (userColor) {
-      applyPrimaryColor(userColor);
-      localStorage.setItem('crm_custom_primary_color', userColor);
-    }
-  }, [user, customLogo, applyPrimaryColor]);
+  }, [user, customLogo]);
+
+  useEffect(() => {
+    // 4. Busca cor DIRETAMENTE DA TABELA TENANTS (fonte canônica cross-device)
+    const carregarCorDoTenant = async () => {
+      const { data: session } = await supabase.auth.getSession();
+      if (!session.session?.user) return;
+
+      // Busca o tenant_id do profile do motorista
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('tenant_id')
+        .eq('user_id', session.session.user.id)
+        .single();
+
+      if (!profile?.tenant_id) return;
+
+      // Busca primary_color e logo do tenant
+      const { data: tenant } = await (supabase
+        .from('tenants')
+        .select('primary_color, logo_url') as any)
+        .eq('id', profile.tenant_id)
+        .single();
+
+      if (tenant?.primary_color) {
+        applyPrimaryColor(tenant.primary_color);
+      }
+      if (tenant?.logo_url && !customLogo) {
+        setCustomLogo(tenant.logo_url);
+        localStorage.setItem('crm_custom_logo', tenant.logo_url);
+      }
+    };
+
+    carregarCorDoTenant();
+  }, [applyPrimaryColor, customLogo]);
 
   // ── Dados ───────────────────────────────────────────────────────────────
 

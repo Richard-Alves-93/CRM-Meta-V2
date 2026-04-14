@@ -18,7 +18,7 @@ const ConfiguracoesPage = ({ db, onRefresh, customLogo, onLogoChange }: Configur
   const [primaryColor, setPrimaryColor] = useState(
     localStorage.getItem('crm_custom_primary_color') || "#3b82f6"
   );
-  const { user } = useAuth();
+  const { user, tenantId } = useAuth();
   const [logoFile, setLogoFile] = useState<File | null>(null);
   const [logoPreview, setLogoPreview] = useState<string | null>(null);
   const [isUploadingLogo, setIsUploadingLogo] = useState(false);
@@ -62,7 +62,18 @@ const ConfiguracoesPage = ({ db, onRefresh, customLogo, onLogoChange }: Configur
     document.documentElement.style.setProperty('--sidebar-primary', hexToHslStr(val));
     document.documentElement.style.setProperty('--sidebar-ring', hexToHslStr(val));
 
-    // Persiste no user_metadata para sincronizar com motoristas em outros dispositivos
+    // Persiste na tabela tenants (compartilhada com todos os usuários do tenant)
+    if (tenantId) {
+      supabase
+        .from('tenants')
+        .update({ primary_color: val } as any)
+        .eq('id', tenantId)
+        .then(({ error }) => {
+          if (error) console.warn('[Cores] Erro ao salvar cor no tenant:', error.message);
+        });
+    }
+
+    // Também salva no user_metadata para compatibilidade com o driver
     supabase.auth.updateUser({ data: { primary_color: val } }).catch(err => {
       console.warn('[Cores] Erro ao salvar cor no user_metadata:', err);
     });
