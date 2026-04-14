@@ -61,6 +61,11 @@ const ConfiguracoesPage = ({ db, onRefresh, customLogo, onLogoChange }: Configur
     document.documentElement.style.setProperty('--ring', hexToHslStr(val));
     document.documentElement.style.setProperty('--sidebar-primary', hexToHslStr(val));
     document.documentElement.style.setProperty('--sidebar-ring', hexToHslStr(val));
+
+    // Persiste no user_metadata para sincronizar com motoristas em outros dispositivos
+    supabase.auth.updateUser({ data: { primary_color: val } }).catch(err => {
+      console.warn('[Cores] Erro ao salvar cor no user_metadata:', err);
+    });
   };
 
   const checkStorageBucket = async () => {

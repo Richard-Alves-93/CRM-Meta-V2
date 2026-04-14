@@ -78,24 +78,45 @@ export default function DriverDashboard() {
     () => localStorage.getItem('crm_custom_logo')
   );
 
+  // Aplica a cor primária nas CSS vars
+  const applyPrimaryColor = useCallback((hex: string) => {
+    document.documentElement.style.setProperty('--primary', hexToHslStr(hex));
+    document.documentElement.style.setProperty('--ring', hexToHslStr(hex));
+    document.documentElement.style.setProperty('--sidebar-primary', hexToHslStr(hex));
+  }, []);
+
   useEffect(() => {
-    // Carrega logo do user metadata (caso tenha sido configurado pelo admin)
+    // 1. Tenta carregar cor do localStorage (mesmo browser)
+    const savedColor = localStorage.getItem('crm_custom_primary_color');
+    if (savedColor) applyPrimaryColor(savedColor);
+
+    // 2. Ouve mudanças em outras abas (admin muda cor -> motorista atualiza)
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === 'crm_custom_primary_color' && e.newValue) {
+        applyPrimaryColor(e.newValue);
+      }
+      if (e.key === 'crm_custom_logo' && e.newValue) {
+        setCustomLogo(e.newValue);
+      }
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, [applyPrimaryColor]);
+
+  useEffect(() => {
+    // 3. Fallback: busca cor e logo do user_metadata do Supabase (cross-device)
     const userLogo = user?.user_metadata?.logo_url;
+    const userColor = user?.user_metadata?.primary_color;
+
     if (userLogo && userLogo !== customLogo) {
       setCustomLogo(userLogo);
       localStorage.setItem('crm_custom_logo', userLogo);
     }
-  }, [user, customLogo]);
-
-  useEffect(() => {
-    // Aplica cor primária personalizada na inicialização
-    const savedColor = localStorage.getItem('crm_custom_primary_color');
-    if (savedColor) {
-      document.documentElement.style.setProperty('--primary', hexToHslStr(savedColor));
-      document.documentElement.style.setProperty('--ring', hexToHslStr(savedColor));
-      document.documentElement.style.setProperty('--sidebar-primary', hexToHslStr(savedColor));
+    if (userColor) {
+      applyPrimaryColor(userColor);
+      localStorage.setItem('crm_custom_primary_color', userColor);
     }
-  }, []);
+  }, [user, customLogo, applyPrimaryColor]);
 
   // ── Dados ───────────────────────────────────────────────────────────────
 
