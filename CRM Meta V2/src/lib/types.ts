@@ -30,6 +30,12 @@ export interface Customer {
   whatsapp: string | null;
   email: string | null;
   observacoes: string | null;
+  cep?: string | null;
+  endereco?: string | null;
+  numero?: string | null;
+  bairro?: string | null;
+  cidade?: string | null;
+  complemento?: string | null;
   ativo?: boolean;
 }
 
@@ -99,4 +105,36 @@ export interface CustomHoliday {
 export interface CrmDatabase {
   metas: Meta[];
   lancamentos: Lancamento[];
+}
+
+export type AuthRole = 'master' | 'owner' | 'admin' | 'atendente' | 'driver';
+
+export interface Profile {
+  id: string;
+  tenant_id: string;
+  role: AuthRole;
+  display_name?: string;
+  email?: string;
+}
+
+export type TransporteStatus = 'AGUARDANDO' | 'A_CAMINHO' | 'REAGENDADO' | 'CONCLUIDO' | 'CANCELADO';
+export type TransporteTipo = 'BUSCA' | 'ENTREGA';
+
+export interface Transporte {
+  id: string;
+  tenant_id: string;
+  venda_id: string | null;
+  pet_id: string | null;
+  tipo: TransporteTipo;
+  data_hora: string;
+  motorista_id: string | null;
+  endereco_transporte: string | null;
+  status: TransporteStatus;
+  observacoes: string | null;
+  
+  // Relations for joining data in UI
+  motorista_nome?: string;
+  cliente_nome?: string;
+  pet_nome?: string;
+  cliente_whatsapp?: string;
 }

@@ -15,6 +15,12 @@ export interface WizardTutor {
   whatsapp: string;
   email: string;
   observacoes: string;
+  cep: string;
+  endereco: string;
+  numero: string;
+  bairro: string;
+  cidade: string;
+  complemento: string;
 }
 
 export interface WizardPet {
@@ -42,7 +48,13 @@ const INITIAL_TUTOR: WizardTutor = {
   telefone: '',
   whatsapp: '',
   email: '',
-  observacoes: ''
+  observacoes: '',
+  cep: '',
+  endereco: '',
+  numero: '',
+  bairro: '',
+  cidade: '',
+  complemento: ''
 };
 
 const INITIAL_PET: WizardPet = {

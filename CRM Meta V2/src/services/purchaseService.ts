@@ -20,6 +20,7 @@ export async function fetchPetPurchases(): Promise<PetPurchase[]> {
       ),
       product:products(*)
     `)
+    .eq('ativo', true)
     .order('proxima_data', { ascending: true });
   if (error) throw error;
 
@@ -60,7 +61,7 @@ export async function updatePetPurchase(id: string, purchase: Partial<Omit<PetPu
 export async function deletePetPurchase(id: string) {
   return withErrorHandler(
     async () => {
-      const { error } = await supabase.from('pet_purchases').delete().eq('id', id);
+      const { error } = await supabase.from('pet_purchases').update({ ativo: false }).eq('id', id);
       if (error) throw handleSupabaseError(error, 'deletePetPurchase');
     },
     'deletePetPurchase',
@@ -77,6 +78,7 @@ export async function fetchPurchases(filters?: { status?: PetPurchaseStatus }): 
       pet:pets(*, customer:customers(*)),
       product:products(*)
     `)
+    .eq('ativo', true)
     .order('proxima_data', { ascending: true });
 
   const { data, error } = await query;
@@ -254,7 +256,8 @@ export async function registerRepurchase(purchaseId: string, newProductId: strin
             data_lembrete: dataLembrete.toISOString().split('T')[0],
             status: 'Ativo',
             ativo: true,
-            purchase_history_id: purchaseId
+            purchase_history_id: purchaseId,
+            valor: stepResults.currentPurchase?.valor || null
           })
           .select()
           .single();

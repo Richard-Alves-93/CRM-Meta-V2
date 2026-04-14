@@ -1,0 +1,151 @@
+# Plano Exaustivo: Módulo de Agenda de Tele-busca e Entrega
+
+Este documento foi elaborado com riqueza de detalhes arquiteturais e lógicos. Seu propósito é servir como o guia definitivo (quase um tutorial) para implementarmos no projeto atual e futuramente no CRM Meta V2.
+
+## 1. Mudanças no Banco de Dados (SQL Supabase)
+
+Será necessário executar um script na aba **SQL Editor** do Supabase para criar as novas estruturas e ajustar a segurança (Row Level Security - RLS).
+
+```sql
+-- 1. Adicionar o campo Endereco aos Clientes
+ALTER TABLE customers ADD COLUMN endereco TEXT DEFAULT NULL;
+
+-- 2. Sistema de Perfis (Roles) para Diferenciar Motoristas
+-- Assumimos que existe a tabela profiles. Caso contrário, adaptamos.
+ALTER TABLE profiles ADD COLUMN role TEXT DEFAULT 'admin';
+-- Os motoristas deverão ter o role = 'driver' definido no banco.
+
+-- 3. Criação da Tabela de Transportes
+CREATE TABLE transportes (
+  id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+  venda_id UUID REFERENCES lancamentos(id) ON DELETE CASCADE,
+  tipo TEXT CHECK (tipo IN ('BUSCA', 'ENTREGA')),
+  data_hora TIMESTAMP WITH TIME ZONE NOT NULL,
+  motorista_id UUID REFERENCES profiles(id) ON DELETE SET NULL,
+  endereco_transporte TEXT,
+  status TEXT CHECK (status IN ('AGUARDANDO', 'A_CAMINHO', 'REAGENDADO', 'CONCLUIDO', 'CANCELADO')) DEFAULT 'AGUARDANDO',
+  observacoes TEXT,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+-- 4. Políticas de Segurança (Row Level Security - RLS)
+ALTER TABLE transportes ENABLE ROW LEVEL SECURITY;
+
+-- Admins podem ver a editar tudo de transportes
+CREATE POLICY "Admins ver tudo em transportes" ON transportes FOR SELECT 
+USING (EXISTS (SELECT 1 FROM profiles WHERE profiles.id = auth.uid() AND profiles.role = 'admin'));
+
+-- Motoristas só podem ver os transportes vinculados ao ID deles
+CREATE POLICY "Motoristas ver proprios transportes" ON transportes FOR SELECT 
+USING (motorista_id = auth.uid() OR EXISTS (SELECT 1 FROM profiles WHERE profiles.id = auth.uid() AND profiles.role = 'admin'));
+
+-- Permissões de escrita (Admin insere/edita livre. Motorista só atualiza Status)
+CREATE POLICY "Admin manipula transportes" ON transportes FOR ALL 
+USING (EXISTS (SELECT 1 FROM profiles WHERE profiles.id = auth.uid() AND profiles.role = 'admin'));
+
+CREATE POLICY "Motorista atualiza status transporte" ON transportes FOR UPDATE
+USING (motorista_id = auth.uid());
+```
+
+---
+
+## 2. Dependências de Terceiros (Frontend)
+
+Para o calendário lindo e manipulação de datas, executaremos via terminal:
+```bash
+npm install react-big-calendar date-fns
+npm install -D @types/react-big-calendar
+```
+
+---
+
+## 3. Tipos e Modelos (TypeScript)
+
+#### `src/lib/types.ts` && `src/integrations/supabase/types.ts`
+Adicionar/Modificar os seguintes tipos:
+1. Na interface `Customer`: `endereco?: string | null;`
+2. Na interface `Profile`: `role?: 'admin' | 'driver';`
+3. Criar a interface `Transporte`:
+```typescript
+export type TransporteStatus = 'AGUARDANDO' | 'A_CAMINHO' | 'REAGENDADO' | 'CONCLUIDO' | 'CANCELADO';
+export type TransporteTipo = 'BUSCA' | 'ENTREGA';
+
+export interface Transporte {
+  id: string;
+  venda_id: string;
+  tipo: TransporteTipo;
+  data_hora: string;
+  motorista_id: string | null;
+  endereco_transporte: string | null;
+  status: TransporteStatus;
+  observacoes: string | null;
+  // relations
+  motorista_nome?: string;
+  cliente_nome?: string;
+  pet_nome?: string;
+  cliente_whatsapp?: string;
+}
+```
+
+---
+
+## 4. Camada de Serviço (Requests)
+
+#### Novo Arquivo: `src/services/transporteService.ts`
+Conterá as funções:
+- `fetchTransportes(startDate, endDate)`: Busca os eventos para jogar no calendário.
+- `fetchTransportesDoMotorista(motoristaId, date)`: Usado no dashboard específico do motorista.
+- `addTransporte(data)` e `updateTransporteStatus(id, newStatus)`
+- `fetchMotoristasDisponiveis()`: Vai à tabela `profiles` buscar todos que tem `role = 'driver'`.
+
+#### Modificação: `src/services/customerService.ts`
+- Atualizar a função de adicionar e editar cliente, incluindo o repasse da variável `endereco`.
+
+---
+
+## 5. Interface do Sistema (Componentes e Telas)
+
+### 5.1. Restrição de Rota e Visão Isolada (Auth)
+#### `src/pages/Index.tsx`
+- Recuperar o `role` logado através da API.
+- **Se for `driver`**: Renderizará a nova tela isolada `DriverDashboard.tsx` no miolo principal e o `CrmSidebar` omitirá as secções como "Metas", "Financeiro", etc. (Só exibirá Transportes e Sair).
+- **Se for `admin`**: Fica como está, renderizando o CRM completo.
+
+### 5.2. O Novo Calendário Geral (Visão do Petshop/Admin)
+#### Novo: `src/pages/AgendaTransportePage.tsx`
+- Tela que carrega inteiramente o componente do `react-big-calendar`.
+- Eventos da Cor Azul (`BUSCA`) e Laranja (`ENTREGA`).
+- Ao clicar em um evento, exibe um modal flutuante: Nome do Tutor, Endereço final, Pet e o **Botão do WhatsApp** (Gerando Link *wa.me/* para disparar mensagem rápida que o motorista X está chegando).
+
+### 5.3. Dashboard Específico do Motorista
+#### Novo: `src/pages/DriverDashboard.tsx`
+- Será a primeira e única tela que o motorista verá.
+- Interface Minimalista Móvel (Mobile First):
+  - Card 1: Próxima Busca (Horário, Endereço, Tutor, Pet, Status dropdown).
+  - Um feed diário ordenado por horário.
+  - Botão gigante de "Atualizar Status para 'A Caminho'" ou "'Concluído'".
+  - Botão gigante de "Abrir no Waze/Google Maps" usando o `endereco_transporte`.
+
+### 5.4. Alteração na Emissão do Serviço (Agendar o Transporte)
+#### Modificação: `src/components/crm/LancamentoModal.tsx`
+No fluxo do formulário de faturamento/lançamento:
+1. Criar Toggle Switch *"Contratou Transporte?"*
+2. Se SIM, expandir um formulário aninhado (Sub-form):
+   - Checkbox: `[ ] Busca` | `[ ] Entrega`
+   - Para Busca: Input (Data/Hora), Select Motorista, TextArea Endereço (Vindo pré-preenchido do cadastro do cliente, mas que o atendente pode apagar e colocar outro).
+   - Para Entrega: Mesmos campos.
+3. No momento de disparar o fechamento do lançamento `handleSave`, o modal encadeia a criação do registro na nova tabela `transportes`.
+
+## Verification Plan
+
+Ao término da geração deste código, entregaremos a seguinte bateria de testes:
+- **Deploy de BD**: Copiar o código SQL do Plano e colar no respectivo ambiente (seja esse projeto ou o CRM V2 posterior).
+- **Fluxo do Admin**:
+  - Salvar Cliente com novo Endereço.
+  - Tentar lançar uma Venda e marcar Busca/Entrega com um motorista cadastrado.
+  - Ir à Agenda Visual (Calendário) para constatar a renderização do evento com sucesso.
+- **Fluxo do Motorista**:
+  - Fazer login com uma conta com `role = driver`.
+  - Confirmar o bloqueio ao resto do sistema (Não ter abas de Faturamento livremente).
+  - Verificar a renderização do Painel Simples com a viagem agendada, interagir com o status e verificar a atualização atômica para "CONCLUIDO".

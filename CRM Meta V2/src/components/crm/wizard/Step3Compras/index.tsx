@@ -2,7 +2,7 @@ import { Button } from "@/components/ui/button";
 import { WizardPurchase, WizardPet } from "../hooks/useWizardState";
 import { Product } from "@/lib/crm-data";
 import { CompraForm } from "./CompraForm";
-import { Plus, Package } from "lucide-react";
+import { Plus, Package, PawPrint } from "lucide-react";
 
 interface Step3ComprasProps {
   purchases: WizardPurchase[];
@@ -30,18 +30,22 @@ export function Step3Compras({
   onRemovePurchase
 }: Step3ComprasProps) {
   return (
-    <div className="space-y-6">
-      <div className="flex items-center gap-3 mb-6">
-        <div className="w-10 h-10 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center">
-          <Package className="w-6 h-6 text-green-600 dark:text-green-400" />
+    <div className="space-y-3">
+      <div className="flex flex-col gap-1">
+        <div className="flex items-center justify-between">
+          <h3 className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
+            <PawPrint className="w-4 h-4" /> Compras Recorrentes
+          </h3>
+          <span className="text-[10px] bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">
+            {purchases.length} {purchases.length === 1 ? 'Item' : 'Itens'}
+          </span>
         </div>
-        <div>
-          <h3 className="text-lg font-semibold">Compras Recorrentes</h3>
-          <p className="text-sm text-muted-foreground">Configure compras automáticas e prazos</p>
-        </div>
+        <p className="text-[10px] text-muted-foreground">
+          💡 Selecione um produto para auto-preencher o prazo de recompra
+        </p>
       </div>
 
-      <div className="space-y-3">
+      <div className="space-y-2">
         {purchases.map((purchase, idx) => (
           <CompraForm
             key={idx}
@@ -60,15 +64,12 @@ export function Step3Compras({
       <Button
         onClick={onAddPurchase}
         variant="outline"
-        className="w-full"
+        size="sm"
+        className="w-full h-8 text-xs border-dashed"
       >
-        <Plus size={16} className="mr-2" />
+        <Plus size={14} className="mr-2" />
         Adicionar Outra Compra
       </Button>
-
-      <div className="text-xs text-muted-foreground bg-blue-50 dark:bg-blue-900/20 p-3 rounded-lg border border-blue-200 dark:border-blue-800">
-        💡 Selecione um produto para auto-preencher o prazo de recompra
-      </div>
     </div>
   );
 }

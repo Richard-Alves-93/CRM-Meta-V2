@@ -1,8 +1,8 @@
-import { BarChart3, FileText, Target, TrendingUp, Settings, X, Users, RefreshCw, Moon, Sun } from "lucide-react";
+import { BarChart3, FileText, Target, TrendingUp, Settings, X, Users, RefreshCw, Moon, Sun, Truck } from "lucide-react";
 import { APP_VERSION } from "@/config/version";
 import { useTheme } from "@/hooks/useTheme";
 
-export type CrmPage = "dashboard" | "lancamentos" | "metas" | "cadastros" | "recompras" | "relatorios" | "configuracoes";
+export type CrmPage = "dashboard" | "lancamentos" | "metas" | "cadastros" | "recompras" | "relatorios" | "configuracoes" | "transportes";
 
 interface CrmSidebarProps {
   currentPage: CrmPage;
@@ -18,6 +18,7 @@ const navItems: { page: CrmPage; label: string; icon: React.ReactNode }[] = [
   { page: "metas", label: "Metas", icon: <Target size={20} /> },
   { page: "cadastros", label: "Cadastros", icon: <Users size={20} /> },
   { page: "recompras", label: "Recompras", icon: <RefreshCw size={20} /> },
+  { page: "transportes", label: "Transportes", icon: <Truck size={20} /> },
   { page: "relatorios", label: "Relatórios", icon: <TrendingUp size={20} /> },
   { page: "configuracoes", label: "Configurações", icon: <Settings size={20} /> },
 ];
@@ -53,12 +54,11 @@ const CrmSidebar = ({ currentPage, onNavigate, logoUrl, isOpen, onClose }: CrmSi
                 className="max-h-12 w-auto max-w-full object-contain"
               />
             ) : (
-              <>
-                <div className="w-9 h-9 rounded-lg bg-primary flex items-center justify-center shrink-0">
-                  <span className="text-primary-foreground text-xs font-bold">CR</span>
-                </div>
-                <span className="font-bold text-card-foreground text-lg truncate">CRM</span>
-              </>
+              <img
+                src="/logo-full.png"
+                alt="CRM Pets Logo"
+                className="max-h-10 w-auto max-w-full object-contain brightness-0 dark:brightness-100 invert-1 dark:invert-0"
+              />
             )}
           </div>
           <button

@@ -111,12 +111,11 @@ export function useCadastrosData(): UseCadastrosDataReturn {
     try {
       await deleteCustomer(id);
 
-      // Atualização de estado usando um novo array (map marcando inativo)
-      setCustomers(prev => prev.map(c => c.id === id ? { ...c, ativo: false } : c));
-      setPets(prev => prev.map(p => p.customer_id === id ? { ...p, ativo: false } : p));
+      // Atualização de estado removendo o item da lista
+      setCustomers(prev => prev.filter(c => c.id !== id));
+      setPets(prev => prev.filter(p => p.customer_id !== id));
 
-      toast.success("Tutor removido!");
-      // Nao usar loadData aqui para uma experiencia instantanea sem recarregamento
+      toast.success("Tutor removido permanentemente!");
     } catch (error) {
       console.error(error);
       toast.error("Erro ao remover cliente.");

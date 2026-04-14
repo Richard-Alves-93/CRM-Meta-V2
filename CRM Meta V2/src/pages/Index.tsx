@@ -15,23 +15,22 @@ import {
   exportarDadosJSON, exportarExcel,
   Meta, Lancamento, CrmDatabase
 } from "@/lib/crm-data";
-import { hexToHslStr } from "@/lib/colors";
 import { useAuth } from "@/modules/auth/hooks/useAuth";
 import { toast } from "sonner";
 import { LogOut, Menu } from "lucide-react";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
+import { supabase } from "@/integrations/supabase/client";
 
-// ETAPA 10: Lazy-loaded pages for code splitting
-// DashboardPage remains eager (critical path)
-// Other pages lazy-load on demand
+// Lazy-loaded pages for code splitting
 const LancamentosPage = lazy(() => import("@/components/crm/LancamentosPage"));
 const MetasPage = lazy(() => import("@/components/crm/MetasPage"));
 const CadastrosPage = lazy(() => import("@/components/crm/cadastros"));
 const RecomprasPage = lazy(() => import("@/components/crm/RecomprasPage"));
 const RelatoriosPage = lazy(() => import("@/components/crm/RelatoriosPage"));
 const ConfiguracoesPage = lazy(() => import("@/components/crm/ConfiguracoesPage"));
-const MasterAdminDashboard = lazy(() => import("@/modules/master/pages/MasterAdminDashboard"));
-
+const AgendaTransportePage = lazy(() => import("@/pages/AgendaTransportePage"));
+import MasterAdminDashboard from "./MasterControl";
+import DriverDashboard from "./DriverDashboard";
 const Index = () => {
   const { user, role, tenantId, signOut } = useAuth();
   const location = useLocation();
@@ -40,7 +39,7 @@ const Index = () => {
   const routeToPage = (pathname: string): CrmPage | 'admin' => {
     const path = pathname === "/" ? "dashboard" : pathname.replace(/^\//, "");
     if (path.startsWith('admin')) return 'admin';
-    const validPages: (CrmPage | 'admin')[] = ["dashboard", "lancamentos", "metas", "cadastros", "recompras", "relatorios", "configuracoes", "admin"];
+    const validPages: (CrmPage | 'admin')[] = ["dashboard", "lancamentos", "metas", "cadastros", "recompras", "transportes", "relatorios", "configuracoes", "admin"];
     return validPages.includes(path as any) ? (path as any) : "dashboard";
   };
 
@@ -74,7 +73,6 @@ const Index = () => {
         return;
       }
       
-      // CHECA O STATUS DO INQUILINO ANTES DE TUDO
       if (tenantId) {
         const { data: tData, error: tErr } = await supabase
           .from('tenants')
@@ -86,7 +84,7 @@ const Index = () => {
           setTenantStatus(tData.status);
           if (tData.status === 'suspended') {
             setLoading(false);
-            return; // Aborta o carregamento do resto se estiver suspenso
+            return;
           }
         }
       }
@@ -101,16 +99,6 @@ const Index = () => {
   }, [page, tenantId]);
 
   useEffect(() => { refresh(); }, [refresh]);
-
-  useEffect(() => {
-    const customPrimaryColor = localStorage.getItem('crm_custom_primary_color');
-    if (customPrimaryColor) {
-      document.documentElement.style.setProperty('--primary', hexToHslStr(customPrimaryColor));
-      document.documentElement.style.setProperty('--ring', hexToHslStr(customPrimaryColor));
-      document.documentElement.style.setProperty('--sidebar-primary', hexToHslStr(customPrimaryColor));
-      document.documentElement.style.setProperty('--sidebar-ring', hexToHslStr(customPrimaryColor));
-    }
-  }, []);
 
   useEffect(() => {
     if (loading) return;
@@ -149,8 +137,6 @@ const Index = () => {
     };
 
     checkGoals();
-    
-    // Checar de tempos em tempos (caso fique como aba congelada no Chrome)
     const interval = setInterval(checkGoals, 1000 * 60 * 60);
     return () => clearInterval(interval);
   }, [db.metas.length, loading]);
@@ -179,32 +165,10 @@ const Index = () => {
       await refresh();
       setLancModalOpen(false);
       setEditingLanc(null);
-      
-      const hasDriveToken = !!localStorage.getItem('google_provider_token');
-      toast.success(editingLanc ? "Lançamento atualizado!" : "Lançamento salvo!", {
-        ...((hasDriveToken && !editingLanc) ? {
-          action: {
-            label: 'Backup no Drive',
-            onClick: async () => {
-              try {
-                toast.loading("Transferindo para o Drive...", { id: "drive-upload" });
-                const { gerarBackupString } = await import("@/services/exportService");
-                const { uploadBackupToGoogleDrive } = await import("@/services/driveService");
-                const jsonString = await gerarBackupString();
-                await uploadBackupToGoogleDrive(jsonString);
-                toast.success('Backup salvo com sucesso na sua conta do Google Drive!', { id: "drive-upload" });
-              } catch(e: any) {
-                toast.error(e.message, { id: "drive-upload" });
-              }
-            }
-          },
-          duration: 10000
-        } : {})
-      });
+      toast.success(editingLanc ? "Lançamento atualizado!" : "Lançamento salvo!");
     } catch (error: any) {
       console.error("Erro ao salvar lançamento:", error);
-      const message = error?.userMessage || "Ocorreu um erro ao salvar o lançamento.";
-      toast.error(message);
+      toast.error("Erro ao salvar lançamento.");
     }
   };
 
@@ -212,32 +176,10 @@ const Index = () => {
     try {
       await addLancamento(data, bruto, desconto);
       await refresh();
-      
-      const hasDriveToken = !!localStorage.getItem('google_provider_token');
-      toast.success("Lançamento salvo!", {
-        ...(hasDriveToken ? {
-          action: {
-            label: 'Backup no Drive',
-            onClick: async () => {
-              try {
-                toast.loading("Transferindo para o Drive...", { id: "drive-upload" });
-                const { gerarBackupString } = await import("@/services/exportService");
-                const { uploadBackupToGoogleDrive } = await import("@/services/driveService");
-                const jsonString = await gerarBackupString();
-                await uploadBackupToGoogleDrive(jsonString);
-                toast.success('Backup salvo com sucesso na sua conta do Google Drive!', { id: "drive-upload" });
-              } catch(e: any) {
-                toast.error(e.message, { id: "drive-upload" });
-              }
-            }
-          },
-          duration: 10000
-        } : {})
-      });
+      toast.success("Lançamento salvo!");
     } catch (error: any) {
       console.error("Erro ao salvar lançamento:", error);
-      const message = error?.userMessage || "Ocorreu um erro ao salvar o lançamento.";
-      toast.error(message);
+      toast.error("Erro ao salvar lançamento.");
     }
   };
 
@@ -259,10 +201,9 @@ const Index = () => {
   const handleGoalReminderKeep = () => {
     setConfirmedGoalsMonth(getCurrentMonthStr());
     setGoalReminderOpen(false);
-    toast.success("Metas renovadas para este mês com sucesso! Boas vendas!");
+    toast.success("Metas renovadas!");
   };
 
-  const handleExport = async () => { await exportarDadosJSON(); };
   const handleExportExcel = async () => { await exportarExcel(); };
 
   const displayName = user?.user_metadata?.full_name || user?.user_metadata?.name || user?.email || "";
@@ -277,9 +218,16 @@ const Index = () => {
     );
   }
 
-  // REDIRECIONAMENTO VIRTUAL PARA TELA DE BLOQUEIO
   if (tenantStatus === 'suspended' && role !== 'master_admin') {
     return <BlockedAccess />;
+  }
+
+  if (role === 'driver') {
+    return (
+      <PageSuspense>
+        <DriverDashboard />
+      </PageSuspense>
+    );
   }
 
   return (
@@ -374,6 +322,11 @@ const Index = () => {
               <RelatoriosPage db={db} onExportExcel={handleExportExcel} />
             </PageSuspense>
           )}
+          {page === "transportes" && (
+            <PageSuspense>
+              <AgendaTransportePage />
+            </PageSuspense>
+          )}
           {page === "configuracoes" && (
             <PageSuspense>
               <ConfiguracoesPage db={db} onRefresh={refresh} customLogo={customLogo} onLogoChange={setCustomLogo} />
@@ -382,14 +335,9 @@ const Index = () => {
         </div>
 
         <footer className="bg-card border-t border-border py-4 px-8 text-center text-xs text-muted-foreground">
-          © {new Date().getFullYear()} CRM Dashboard desenvolvido por <a href="https://wa.me/5551991840532" target="_blank" rel="noopener noreferrer" className="hover:text-foreground hover:underline transition-colors font-medium">Richard Alves</a>. Todos os direitos reservados.
+          © {new Date().getFullYear()} CRM Dashboard. Todos os direitos reservados.
         </footer>
       </main>
-
-      <a id="custom-badge-cta" target="_blank" href="https://wa.me/5551991840532" rel="noopener noreferrer" 
-         className="fixed bottom-4 right-4 bg-[#25D366] text-white px-3 py-1.5 rounded-full no-underline font-sans text-xs font-medium shadow-md z-[9999] transition-transform hover:scale-105">
-        Falar com Richard Alves
-      </a>
 
       <GoalReminderModal
         open={goalReminderOpen}

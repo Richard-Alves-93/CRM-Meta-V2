@@ -39,8 +39,8 @@ function PetFormComponent({ pet, index, onPetChange, onRemove, showRemove }: Pet
   };
 
   return (
-    <div className="border border-border/50 rounded-lg p-4 bg-secondary/20">
-      <div className="flex justify-between items-start mb-4">
+    <div className="border border-border/50 rounded-lg p-3 bg-secondary/15">
+      <div className="flex justify-between items-start mb-2">
         <h4 className="font-semibold text-sm">Pet #{index + 1}</h4>
         {showRemove && (
           <button
@@ -53,29 +53,27 @@ function PetFormComponent({ pet, index, onPetChange, onRemove, showRemove }: Pet
         )}
       </div>
 
-      <div className="grid gap-3">
-        {/* Nome - Required */}
-        <div>
-          <Label htmlFor={`pet-${index}-nome`} className="text-xs font-medium">
-            Nome do Pet *
-          </Label>
-          <Input
-            id={`pet-${index}-nome`}
-            placeholder="Ex: Fluffy"
-            value={pet.nome}
-            onChange={(e) => onPetChange(index, 'nome', e.target.value)}
-            className="mt-1 h-8"
-          />
-        </div>
-
-        {/* Espécie + Raça */}
-        <div className="grid grid-cols-2 gap-2">
-          <div>
-            <Label htmlFor={`pet-${index}-especie`} className="text-xs font-medium">
+      <div className="grid gap-2">
+        {/* Linha 1: Nome + Espécie + Raça */}
+        <div className="grid grid-cols-12 gap-2">
+          <div className="col-span-12 sm:col-span-6 space-y-1">
+            <Label htmlFor={`pet-${index}-nome`} className="text-[10px] font-bold text-muted-foreground uppercase">
+              Nome do Pet *
+            </Label>
+            <Input
+              id={`pet-${index}-nome`}
+              placeholder="Ex: Fluffy"
+              value={pet.nome}
+              onChange={(e) => onPetChange(index, 'nome', e.target.value)}
+              className="h-8 text-sm"
+            />
+          </div>
+          <div className="col-span-6 sm:col-span-3 space-y-1">
+            <Label htmlFor={`pet-${index}-especie`} className="text-[10px] font-bold text-muted-foreground uppercase">
               Espécie *
             </Label>
             <Select value={pet.especie} onValueChange={(v) => onPetChange(index, 'especie', v)}>
-              <SelectTrigger id={`pet-${index}-especie`} className="mt-1 h-8">
+              <SelectTrigger id={`pet-${index}-especie`} className="h-8 text-sm">
                 <SelectValue placeholder="Selecione" />
               </SelectTrigger>
               <SelectContent>
@@ -84,9 +82,8 @@ function PetFormComponent({ pet, index, onPetChange, onRemove, showRemove }: Pet
               </SelectContent>
             </Select>
           </div>
-
-          <div>
-            <Label htmlFor={`pet-${index}-raca`} className="text-xs font-medium">
+          <div className="col-span-6 sm:col-span-3 space-y-1">
+            <Label htmlFor={`pet-${index}-raca`} className="text-[10px] font-bold text-muted-foreground uppercase">
               Raça *
             </Label>
             <Input
@@ -96,7 +93,7 @@ function PetFormComponent({ pet, index, onPetChange, onRemove, showRemove }: Pet
               value={pet.raca}
               onChange={(e) => onPetChange(index, 'raca', e.target.value)}
               onBlur={(e) => handleRacaBlur(e.target.value)}
-              className="mt-1 h-8"
+              className="h-8 text-sm"
             />
             <datalist id={`list-racas-wizard-${index}`}>
               {racasList.map((r, idx) => (
@@ -106,15 +103,15 @@ function PetFormComponent({ pet, index, onPetChange, onRemove, showRemove }: Pet
           </div>
         </div>
 
-        {/* Sexo + Porte */}
-        <div className="grid grid-cols-2 gap-2">
-          <div>
-            <Label htmlFor={`pet-${index}-sexo`} className="text-xs font-medium">
+        {/* Linha 2: Sexo + Porte + Peso + Nascimento */}
+        <div className="grid grid-cols-12 gap-2">
+          <div className="col-span-3 space-y-1">
+            <Label htmlFor={`pet-${index}-sexo`} className="text-[10px] font-bold text-muted-foreground uppercase">
               Sexo *
             </Label>
             <Select value={pet.sexo} onValueChange={(v) => onPetChange(index, 'sexo', v)}>
-              <SelectTrigger id={`pet-${index}-sexo`} className="mt-1 h-8">
-                <SelectValue placeholder="Selecione" />
+              <SelectTrigger id={`pet-${index}-sexo`} className="h-8 text-sm">
+                <SelectValue placeholder="..." />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="Macho">Macho</SelectItem>
@@ -122,14 +119,13 @@ function PetFormComponent({ pet, index, onPetChange, onRemove, showRemove }: Pet
               </SelectContent>
             </Select>
           </div>
-
-          <div>
-            <Label htmlFor={`pet-${index}-porte`} className="text-xs font-medium">
+          <div className="col-span-3 space-y-1">
+            <Label htmlFor={`pet-${index}-porte`} className="text-[10px] font-bold text-muted-foreground uppercase">
               Porte *
             </Label>
             <Select value={pet.porte} onValueChange={(v) => onPetChange(index, 'porte', v)}>
-              <SelectTrigger id={`pet-${index}-porte`} className="mt-1 h-8">
-                <SelectValue placeholder="Selecione" />
+              <SelectTrigger id={`pet-${index}-porte`} className="h-8 text-sm">
+                <SelectValue placeholder="..." />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="Pequeno">Pequeno</SelectItem>
@@ -138,27 +134,22 @@ function PetFormComponent({ pet, index, onPetChange, onRemove, showRemove }: Pet
               </SelectContent>
             </Select>
           </div>
-        </div>
-
-        {/* Peso + Data Aniversário */}
-        <div className="grid grid-cols-2 gap-2">
-          <div>
-            <Label htmlFor={`pet-${index}-peso`} className="text-xs font-medium">
+          <div className="col-span-3 space-y-1">
+            <Label htmlFor={`pet-${index}-peso`} className="text-[10px] font-bold text-muted-foreground uppercase">
               Peso (kg)
             </Label>
             <Input
               id={`pet-${index}-peso`}
-              placeholder="Ex: 5.5"
+              placeholder="0.0"
               type="number"
               step="0.1"
               value={pet.peso}
               onChange={(e) => onPetChange(index, 'peso', e.target.value)}
-              className="mt-1 h-8"
+              className="h-8 text-sm"
             />
           </div>
-
-          <div>
-            <Label htmlFor={`pet-${index}-aniversario`} className="text-xs font-medium">
+          <div className="col-span-3 space-y-1">
+            <Label htmlFor={`pet-${index}-aniversario`} className="text-[10px] font-bold text-muted-foreground uppercase">
               Data Nasc.
             </Label>
             <Input
@@ -166,7 +157,7 @@ function PetFormComponent({ pet, index, onPetChange, onRemove, showRemove }: Pet
               type="date"
               value={pet.data_aniversario}
               onChange={(e) => onPetChange(index, 'data_aniversario', e.target.value)}
-              className="mt-1 h-8"
+              className="h-8 text-sm px-1"
             />
           </div>
         </div>

@@ -78,14 +78,19 @@ export async function addLancamento(
   const user = await getAuthUser();
   return withErrorHandler(
     async () => {
-      const { error } = await supabase.from('lancamentos').insert({
-        user_id: user.id,
-        data,
-        valor_bruto: valorBruto,
-        desconto,
-      });
+      const { data: createdData, error } = await supabase
+        .from('lancamentos')
+        .insert({
+          user_id: user.id,
+          data,
+          valor_bruto: valorBruto,
+          desconto,
+        })
+        .select()
+        .single();
 
       if (error) throw handleSupabaseError(error, 'addLancamento');
+      return createdData as Lancamento;
     },
     'addLancamento',
     undefined,

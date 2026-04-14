@@ -25,6 +25,13 @@ export type Database = {
           user_id: string
           whatsapp: string | null
           tenant_id: string | null
+          cep: string | null
+          endereco: string | null
+          numero: string | null
+          bairro: string | null
+          cidade: string | null
+          complemento: string | null
+          ativo: boolean | null
         }
         Insert: {
           created_at?: string
@@ -36,6 +43,13 @@ export type Database = {
           user_id: string
           whatsapp?: string | null
           tenant_id?: string | null
+          cep?: string | null
+          endereco?: string | null
+          numero?: string | null
+          bairro?: string | null
+          cidade?: string | null
+          complemento?: string | null
+          ativo?: boolean | null
         }
         Update: {
           created_at?: string
@@ -47,8 +61,114 @@ export type Database = {
           user_id?: string
           whatsapp?: string | null
           tenant_id?: string | null
+          cep?: string | null
+          endereco?: string | null
+          numero?: string | null
+          bairro?: string | null
+          cidade?: string | null
+          complemento?: string | null
+          ativo?: boolean | null
         }
         Relationships: []
+      }
+      lancamentos: {
+        Row: {
+          created_at: string
+          data: string
+          desconto: number
+          id: string
+          user_id: string
+          valor_bruto: number
+          valor_liquido: number | null
+          tenant_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          data: string
+          desconto?: number
+          id?: string
+          user_id: string
+          valor_bruto: number
+          valor_liquido?: number | null
+          tenant_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          data?: string
+          desconto?: number
+          id?: string
+          user_id?: string
+          valor_bruto?: number
+          valor_liquido?: number | null
+          tenant_id?: string | null
+        }
+        Relationships: []
+      }
+      metas: {
+        Row: {
+          created_at: string
+          descricao: string | null
+          id: string
+          nome: string
+          user_id: string
+          valor: number
+        }
+        Insert: {
+          created_at?: string
+          descricao?: string | null
+          id?: string
+          nome: string
+          user_id: string
+          valor: number
+        }
+        Update: {
+          created_at?: string
+          descricao?: string | null
+          id?: string
+          nome?: string
+          user_id?: string
+          valor?: number
+          tenant_id?: string | null
+        }
+        Relationships: []
+      }
+      notifications: {
+        Row: {
+          created_at: string
+          data: string
+          id: string
+          purchase_id: string
+          status: string
+          tipo: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          data: string
+          id?: string
+          purchase_id: string
+          status: string
+          tipo: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          data?: string
+          id?: string
+          purchase_id?: string
+          status?: string
+          tipo?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "notifications_purchase_id_fkey"
+            columns: ["purchase_id"]
+            isOneToOne: false
+            referencedRelation: "pet_purchases"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       lancamentos: {
         Row: {
@@ -164,6 +284,8 @@ export type Database = {
           status: string
           user_id: string
           tenant_id: string | null
+          valor: number | null
+          ativo: boolean | null
         }
         Insert: {
           created_at?: string
@@ -179,6 +301,8 @@ export type Database = {
           status?: string
           user_id: string
           tenant_id?: string | null
+          valor?: number | null
+          ativo?: boolean | null
         }
         Update: {
           created_at?: string
@@ -194,6 +318,8 @@ export type Database = {
           status?: string
           user_id?: string
           tenant_id?: string | null
+          valor?: number | null
+          ativo?: boolean | null
         }
         Relationships: [
           {
@@ -232,6 +358,7 @@ export type Database = {
           raca: string | null
           sexo: string | null
           user_id: string
+          ativo: boolean | null
         }
         Insert: {
           created_at?: string
@@ -245,6 +372,7 @@ export type Database = {
           raca?: string | null
           sexo?: string | null
           user_id: string
+          ativo?: boolean | null
         }
         Update: {
           created_at?: string
@@ -258,6 +386,7 @@ export type Database = {
           raca?: string | null
           sexo?: string | null
           user_id?: string
+          ativo?: boolean | null
         }
         Relationships: [
           {

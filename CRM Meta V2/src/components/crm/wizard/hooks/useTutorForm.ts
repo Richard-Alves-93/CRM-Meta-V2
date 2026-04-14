@@ -6,13 +6,13 @@ import { WizardTutor } from "./useWizardState";
  * Handles tutor form updates and validation
  */
 
-export function useTutorForm(tutor: WizardTutor, setTutor: (tutor: WizardTutor) => void) {
+export function useTutorForm(tutor: WizardTutor, setTutor: React.Dispatch<React.SetStateAction<WizardTutor>>) {
   const handleTutorChange = useCallback((field: keyof WizardTutor, value: string) => {
-    setTutor({
-      ...tutor,
+    setTutor(prev => ({
+      ...prev,
       [field]: value
-    });
-  }, [tutor, setTutor]);
+    }));
+  }, [setTutor]);
 
   const validateTutor = useCallback(() => {
     return tutor.nome.trim() !== '';

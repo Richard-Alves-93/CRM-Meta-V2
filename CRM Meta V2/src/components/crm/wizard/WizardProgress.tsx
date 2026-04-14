@@ -18,7 +18,7 @@ export function WizardProgress({ currentStep }: WizardProgressProps) {
   ];
 
   return (
-    <div className="mb-6">
+    <div className="mb-4">
       <div className="flex items-center justify-between">
         {steps.map((step, idx) => {
           const StepIcon = step.icon;
@@ -28,9 +28,9 @@ export function WizardProgress({ currentStep }: WizardProgressProps) {
           return (
             <div key={step.number} className="flex items-center flex-1">
               {/* Step indicator */}
-              <div className="flex flex-col items-center flex-1">
+              <div className="flex flex-col items-center">
                 <div
-                  className={`w-12 h-12 rounded-full border-2 flex items-center justify-center transition-all ${
+                  className={`w-9 h-9 rounded-full border-2 flex items-center justify-center transition-all ${
                     isActive
                       ? 'border-primary bg-primary/10'
                       : isCompleted
@@ -39,16 +39,18 @@ export function WizardProgress({ currentStep }: WizardProgressProps) {
                   }`}
                 >
                   {isCompleted ? (
-                    <Check className="w-6 h-6 text-green-600 dark:text-green-400" />
+                    <Check className="w-5 h-5 text-green-600 dark:text-green-400" />
                   ) : (
                     <StepIcon
-                      className={`w-6 h-6 ${
+                      className={`w-5 h-5 ${
                         isActive ? 'text-primary' : 'text-muted-foreground'
                       }`}
                     />
                   )}
                 </div>
-                <span className="text-xs font-medium mt-2 text-foreground">
+                <span className={`text-[10px] font-bold mt-1 uppercase tracking-tighter ${
+                  isActive ? 'text-primary' : isCompleted ? 'text-green-600' : 'text-muted-foreground'
+                }`}>
                   {step.label}
                 </span>
               </div>
@@ -56,7 +58,7 @@ export function WizardProgress({ currentStep }: WizardProgressProps) {
               {/* Divider line */}
               {idx < steps.length - 1 && (
                 <div
-                  className={`flex-1 h-0.5 mx-2 transition-all ${
+                  className={`flex-1 h-px mx-1 transition-all ${
                     isCompleted ? 'bg-green-500' : 'bg-border'
                   }`}
                 />

@@ -1,26 +1,29 @@
 import { supabase } from "@/integrations/supabase/client";
-import { getAuthUserId } from "@/services/authService";
 
 export interface SystemLog {
   action: string;
   entity: string;
-  details?: Record<string, any>;
+  details?: any;
 }
 
-export const logSystemAction = async ({ action, entity, details = {} }: SystemLog) => {
+export const logSystemAction = async (log: SystemLog) => {
   try {
-    const userId = await getAuthUserId();
-    
-    // Sempre tenta registrar a ação assincronamente (Fire and Forget)
-    await supabase.from('logs').insert({
-      user_id: userId,
-      action,
-      entity,
-      details
-    });
-    
-    console.log(`[LogService] Ação Registrada: ${action} em ${entity}`);
-  } catch (error) {
-    console.error("[LogService] Falha ao gravar auditoria silênciosa:", error);
+    console.log('[SystemLog]', log);
+    // Armazena no Supabase se houver tabela para isso, 
+    // ou apenas mantém o log para auditoria futura.
+    const { error } = await supabase
+      .from('system_logs')
+      .insert({
+        action: log.action,
+        entity: log.entity,
+        details: log.details
+      });
+
+    if (error) {
+      // Se a tabela não existir, apenas logamos no console para não quebrar o sistema
+      console.warn('[SystemLog] Tabela system_logs não encontrada ou erro ao inserir.');
+    }
+  } catch (err) {
+    console.error('[SystemLog] Erro ao registrar log:', err);
   }
 };

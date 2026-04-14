@@ -9,13 +9,18 @@ import { getAuthUser } from "@/services/authService";
 import type { Pet } from "@/lib/types";
 
 export async function fetchPets(): Promise<Pet[]> {
-  const { data, error } = await supabase.from('pets').select('*').order('nome');
+  const { data, error } = await supabase.from('pets').select('*').eq('ativo', true).order('nome');
   if (error) throw error;
   return data as Pet[];
 }
 
 export async function fetchPetsByCustomer(customerId: string): Promise<Pet[]> {
-  const { data, error } = await supabase.from('pets').select('*').eq('customer_id', customerId).order('nome');
+  const { data, error } = await supabase
+    .from('pets')
+    .select('*')
+    .eq('customer_id', customerId)
+    .eq('ativo', true)
+    .order('nome');
   if (error) throw error;
   return data as Pet[];
 }
@@ -57,11 +62,11 @@ export async function updatePet(id: string, pet: Partial<Omit<Pet, 'id'>>) {
 export async function deletePet(id: string) {
   return withErrorHandler(
     async () => {
-      // Remove dependent pet purchases first to avoid FK constraints
-      await supabase.from('pet_purchases').delete().eq('pet_id', id);
+      // Soft delete dependent pet purchases
+      await supabase.from('pet_purchases').update({ ativo: false }).eq('pet_id', id);
 
-      // Delete the pet
-      const { error } = await supabase.from('pets').delete().eq('id', id);
+      // Soft delete the pet
+      const { error } = await supabase.from('pets').update({ ativo: false }).eq('id', id);
       if (error) throw handleSupabaseError(error, 'deletePet');
     },
     'deletePet',

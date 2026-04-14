@@ -17,6 +17,12 @@ const customerSchema = z.object({
   email: z.string().trim().email("Email inválido").max(255, "Email muito longo").nullable().optional()
     .or(z.literal("")).or(z.null()),
   observacoes: z.string().trim().max(1000, "Observações muito longas").nullable().optional(),
+  cep: z.string().trim().max(20, "CEP muito longo").nullable().optional().or(z.literal("")),
+  endereco: z.string().trim().max(300, "Endereço muito longo").nullable().optional().or(z.literal("")),
+  numero: z.string().trim().max(20, "Número muito longo").nullable().optional().or(z.literal("")),
+  bairro: z.string().trim().max(100, "Bairro muito longo").nullable().optional().or(z.literal("")),
+  cidade: z.string().trim().max(100, "Cidade muito longa").nullable().optional().or(z.literal("")),
+  complemento: z.string().trim().max(200, "Complemento muito longo").nullable().optional().or(z.literal("")),
 });
 
 function validateCustomerInput(data: Record<string, any>) {
@@ -35,9 +41,20 @@ function validateCustomerInput(data: Record<string, any>) {
 }
 
 export async function fetchCustomers(): Promise<Customer[]> {
-  const { data, error } = await supabase.from('customers').select('*').order('nome');
+  const { data, error } = await supabase.from('customers').select('*').eq('ativo', true).order('nome');
   if (error) throw error;
   return data as Customer[];
+}
+
+export async function fetchCustomersWithPets(): Promise<(Customer & { pets: Pet[] })[]> {
+  const { data, error } = await supabase
+    .from('customers')
+    .select('*, pets(*)')
+    .eq('ativo', true)
+    .order('nome');
+    
+  if (error) throw error;
+  return data as (Customer & { pets: Pet[] })[];
 }
 
 export async function addCustomer(customer: Omit<Customer, 'id'>): Promise<Customer> {
@@ -69,8 +86,12 @@ export async function updateCustomer(id: string, customer: Partial<Omit<Customer
 export async function deleteCustomer(id: string) {
   return withErrorHandler(
     async () => {
-      const { error } = await supabase.from('customers').delete().eq('id', id);
-      if (error) throw handleSupabaseError(error, 'deleteCustomer');
+      // Chama a função especial criada no SQL Editor para uma limpeza profunda
+      const { error } = await supabase.rpc('delete_customer_complete', { 
+        target_customer_id: id 
+      });
+      
+      if (error) throw handleSupabaseError(error, 'deleteCustomer - via RPC');
     },
     'deleteCustomer',
     undefined,

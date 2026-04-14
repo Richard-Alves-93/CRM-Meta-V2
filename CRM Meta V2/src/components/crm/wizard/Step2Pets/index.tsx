@@ -18,18 +18,22 @@ interface Step2PetsProps {
 
 export function Step2Pets({ pets, onPetChange, onAddPet, onRemovePet }: Step2PetsProps) {
   return (
-    <div className="space-y-6">
-      <div className="flex items-center gap-3 mb-6">
-        <div className="w-10 h-10 rounded-full bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center">
-          <PawPrint className="w-6 h-6 text-amber-600 dark:text-amber-400" />
+    <div className="space-y-3">
+      <div className="flex flex-col gap-1">
+        <div className="flex items-center justify-between">
+          <h3 className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
+            <PawPrint className="w-4 h-4" /> Seus Pets
+          </h3>
+          <span className="text-[10px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-medium">
+            {pets.length} {pets.length === 1 ? 'Pet' : 'Pets'}
+          </span>
         </div>
-        <div>
-          <h3 className="text-lg font-semibold">Seus Pets</h3>
-          <p className="text-sm text-muted-foreground">Adicione os pets deste tutor</p>
-        </div>
+        <p className="text-[10px] text-muted-foreground">
+          💡 Todos os pets devem ter pelo menos o nome preenchido
+        </p>
       </div>
 
-      <div className="space-y-3">
+      <div className="space-y-2">
         {pets.map((pet, idx) => (
           <PetForm
             key={idx}
@@ -45,15 +49,12 @@ export function Step2Pets({ pets, onPetChange, onAddPet, onRemovePet }: Step2Pet
       <Button
         onClick={onAddPet}
         variant="outline"
-        className="w-full"
+        size="sm"
+        className="w-full h-8 text-xs border-dashed"
       >
-        <Plus size={16} className="mr-2" />
+        <Plus size={14} className="mr-2" />
         Adicionar Outro Pet
       </Button>
-
-      <div className="text-xs text-muted-foreground bg-blue-50 dark:bg-blue-900/20 p-3 rounded-lg border border-blue-200 dark:border-blue-800">
-        💡 Todos os pets devem ter pelo menos o nome preenchido
-      </div>
     </div>
   );
 }

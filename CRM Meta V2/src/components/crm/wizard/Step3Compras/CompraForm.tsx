@@ -60,8 +60,8 @@ function CompraFormComponent({
   const filteredProducts = products.filter(p => !purchase.categoria || p.categoria === purchase.categoria);
 
   return (
-    <div className="border border-border/50 rounded-lg p-4 bg-secondary/20">
-      <div className="flex justify-between items-start mb-4">
+    <div className="border border-border/50 rounded-lg p-3 bg-secondary/15">
+      <div className="flex justify-between items-start mb-2">
         <h4 className="font-semibold text-sm">Compra Recorrente #{index + 1}</h4>
         {showRemove && (
           <button
@@ -74,61 +74,59 @@ function CompraFormComponent({
         )}
       </div>
 
-      <div className="grid gap-3">
-        {/* Pet Selection - Required */}
-        <div>
-          <Label htmlFor={`purchase-${index}-pet`} className="text-xs font-medium">
-            Para qual Pet? *
-          </Label>
-          <Select
-            value={String(purchase.petIndex)}
-            onValueChange={(v) => onChange(index, 'petIndex', parseInt(v))}
-          >
-            <SelectTrigger id={`purchase-${index}-pet`} className="mt-1 h-8">
-              <SelectValue placeholder="Selecione um pet" />
-            </SelectTrigger>
-            <SelectContent>
-              {pets.map((pet, i) => (
-                <SelectItem key={i} value={String(i)}>
-                  {pet.nome || `Pet ${i + 1}`}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+      <div className="grid gap-2">
+        {/* Linha 1: Pet + Categoria + Produto */}
+        <div className="grid grid-cols-12 gap-2">
+          <div className="col-span-12 sm:col-span-4 space-y-1">
+            <Label htmlFor={`purchase-${index}-pet`} className="text-[10px] font-bold text-muted-foreground uppercase">
+              Para qual Pet? *
+            </Label>
+            <Select
+              value={String(purchase.petIndex)}
+              onValueChange={(v) => onChange(index, 'petIndex', parseInt(v))}
+            >
+              <SelectTrigger id={`purchase-${index}-pet`} className="h-8 text-sm">
+                <SelectValue placeholder="Selecione um pet" />
+              </SelectTrigger>
+              <SelectContent>
+                {pets.map((pet, i) => (
+                  <SelectItem key={i} value={String(i)}>
+                    {pet.nome || `Pet ${i + 1}`}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
 
-        {/* Category Selection */}
-        <div>
-          <Label htmlFor={`purchase-${index}-category`} className="text-xs font-medium">
-            Selecione a Categoria
-          </Label>
-          <Select
-            value={purchase.categoria || "Todas"}
-            onValueChange={(v) => onChange(index, 'categoria', v === "Todas" ? "" : v)}
-          >
-            <SelectTrigger id={`purchase-${index}-category`} className="mt-1 h-8">
-              <SelectValue placeholder="Todas as Categorias" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="Todas">Todas as Categorias</SelectItem>
-              <SelectItem value="Antipulgas">Antipulgas</SelectItem>
-              <SelectItem value="Vacina">Vacina</SelectItem>
-              <SelectItem value="Ração">Ração</SelectItem>
-              <SelectItem value="Vermífugo">Vermífugo</SelectItem>
-              <SelectItem value="Higiene">Higiene</SelectItem>
-              <SelectItem value="Medicamento">Medicamento</SelectItem>
-              <SelectItem value="Estética">Estética</SelectItem>
-              <SelectItem value="Outros">Outros</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
+          <div className="col-span-12 sm:col-span-4 space-y-1">
+            <Label htmlFor={`purchase-${index}-category`} className="text-[10px] font-bold text-muted-foreground uppercase">
+              Categoria
+            </Label>
+            <Select
+              value={purchase.categoria || "Todas"}
+              onValueChange={(v) => onChange(index, 'categoria', v === "Todas" ? "" : v)}
+            >
+              <SelectTrigger id={`purchase-${index}-category`} className="h-8 text-sm">
+                <SelectValue placeholder="Todas as Categorias" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="Todas">Todas as Categorias</SelectItem>
+                <SelectItem value="Antipulgas">Antipulgas</SelectItem>
+                <SelectItem value="Vacina">Vacina</SelectItem>
+                <SelectItem value="Ração">Ração</SelectItem>
+                <SelectItem value="Vermífugo">Vermífugo</SelectItem>
+                <SelectItem value="Higiene">Higiene</SelectItem>
+                <SelectItem value="Medicamento">Medicamento</SelectItem>
+                <SelectItem value="Estética">Estética</SelectItem>
+                <SelectItem value="Outros">Outros</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
 
-        {/* Product Selection + Auto-fill prazo */}
-        <div>
-          <Label htmlFor={`purchase-${index}-product`} className="text-xs font-medium">
-            Produto *
-          </Label>
-          <div className="mt-1">
+          <div className="col-span-12 sm:col-span-4 space-y-1">
+            <Label htmlFor={`purchase-${index}-product`} className="text-[10px] font-bold text-muted-foreground uppercase">
+              Produto *
+            </Label>
             <ProductCombobox
               products={filteredProducts}
               selectedProductId={purchase.product_id}
@@ -138,10 +136,10 @@ function CompraFormComponent({
           </div>
         </div>
 
-        {/* Date + Prazo + Valor */}
-        <div className="grid grid-cols-3 gap-2">
-          <div>
-            <Label htmlFor={`purchase-${index}-date`} className="text-xs font-medium">
+        {/* Linha 2: Data + Prazo + Valor */}
+        <div className="grid grid-cols-12 gap-2">
+          <div className="col-span-4 space-y-1">
+            <Label htmlFor={`purchase-${index}-date`} className="text-[10px] font-bold text-muted-foreground uppercase">
               Data da Compra *
             </Label>
             <Input
@@ -149,12 +147,12 @@ function CompraFormComponent({
               type="date"
               value={purchase.data_compra}
               onChange={(e) => onChange(index, 'data_compra', e.target.value)}
-              className="mt-1 h-8"
+              className="h-8 text-sm px-1"
             />
           </div>
 
-          <div>
-            <Label htmlFor={`purchase-${index}-prazo`} className="text-xs font-medium">
+          <div className="col-span-4 space-y-1">
+            <Label htmlFor={`purchase-${index}-prazo`} className="text-[10px] font-bold text-muted-foreground uppercase">
               Prazo (dias) *
             </Label>
             <Input
@@ -163,13 +161,13 @@ function CompraFormComponent({
               min="1"
               value={purchase.prazo_recompra}
               onChange={(e) => onChange(index, 'prazo_recompra', parseInt(e.target.value) || 1)}
-              className="mt-1 h-8"
+              className="h-8 text-sm"
               placeholder="30"
             />
           </div>
 
-          <div>
-            <Label htmlFor={`purchase-${index}-valor`} className="text-xs font-medium">
+          <div className="col-span-4 space-y-1">
+            <Label htmlFor={`purchase-${index}-valor`} className="text-[10px] font-bold text-muted-foreground uppercase">
               Valor (R$)
             </Label>
             <Input
@@ -181,18 +179,11 @@ function CompraFormComponent({
                 const cents = parseCurrencyInput(e.target.value);
                 onChange(index, 'valor', cents / 100);
               }}
-              className="mt-1 h-8"
+              className="h-8 text-sm"
               placeholder="0,00"
             />
           </div>
         </div>
-
-        {/* Preview dates */}
-        {purchase.data_compra && (
-          <div className="text-xs text-muted-foreground bg-green-50 dark:bg-green-900/20 p-2 rounded border border-green-200 dark:border-green-800">
-            ✓ Próxima recompra calculada automaticamente
-          </div>
-        )}
       </div>
     </div>
   );

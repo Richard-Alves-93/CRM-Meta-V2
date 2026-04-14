@@ -6,6 +6,14 @@ import { Label } from "@/components/ui/label";
 import { Lancamento, formatCurrency } from "@/lib/crm-data";
 import { formatISODate } from "@/utils/date";
 import { useCurrencyInput } from "@/hooks/useCurrencyInput";
+import { Switch } from "@/components/ui/switch";
+import { Truck } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { transporteService } from "@/services/transporteService";
+import { fetchCustomers } from "@/services/customerService";
+import { fetchPetsByCustomer } from "@/services/petService";
+import { Customer, Pet, Profile, TransporteTipo } from "@/lib/types";
+import { toast } from "sonner";
 
 interface LancamentoModalProps {
   open: boolean;
