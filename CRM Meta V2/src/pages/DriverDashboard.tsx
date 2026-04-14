@@ -161,8 +161,6 @@ export default function DriverDashboard() {
 
   const ativas    = transportes.filter(t => ['AGUARDANDO', 'A_CAMINHO'].includes(t.status));
   const conclHoje = transportes.filter(t => t.status === 'CONCLUIDO' && isHoje(t.data_hora));
-  const proxima   = ativas[0];
-  const restantes = ativas.slice(1);
   const futuras   = transportes.filter(t => !['AGUARDANDO', 'A_CAMINHO'].includes(t.status) && !isHoje(t.data_hora));
 
   // ── Sidebar simplificada do motorista ────────────────────────────────
@@ -289,77 +287,99 @@ export default function DriverDashboard() {
             </p>
           </div>
 
-          {/* ── Próxima Tele ─────────────────── */}
+          {/* ── Teles Ativas (todas com ações completas) ─────────── */}
           <section>
-            <h2 className="text-xs font-bold text-muted-foreground uppercase tracking-widest mb-3">Próxima Tele</h2>
+            <h2 className="text-xs font-bold text-muted-foreground uppercase tracking-widest mb-3">
+              Teles Ativas {ativas.length > 0 && <span className="ml-1 text-primary">({ativas.length})</span>}
+            </h2>
 
-            {proxima ? (
-              <Card className={`border-2 ${isUrgente(proxima.data_hora) ? 'border-amber-400 animate-pulse' : 'border-primary/20'} shadow-md`}>
-                <div className={`h-1 w-full rounded-t-xl ${proxima.tipo === 'BUSCA' ? 'bg-blue-500' : 'bg-orange-500'}`} />
-                <CardHeader className="pb-2 pt-4">
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${proxima.tipo === 'BUSCA' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300' : 'bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300'}`}>
-                          {proxima.tipo === 'BUSCA' ? '🐾 Busca' : '📦 Entrega'}
-                        </span>
-                        {isUrgente(proxima.data_hora) && (
-                          <span className="text-[10px] text-amber-500 font-bold flex items-center gap-1">
-                            <AlertCircle className="w-3 h-3" /> Urgente
-                          </span>
+            {ativas.length > 0 ? (
+              <div className="space-y-4">
+                {ativas.map((v, idx) => (
+                  <Card
+                    key={v.id}
+                    className={`border-2 shadow-md ${
+                      idx === 0 && isUrgente(v.data_hora)
+                        ? 'border-amber-400 animate-pulse'
+                        : idx === 0
+                        ? 'border-primary/30'
+                        : 'border-border'
+                    }`}
+                  >
+                    {/* Barra de tipo */}
+                    <div className={`h-1 w-full rounded-t-xl ${v.tipo === 'BUSCA' ? 'bg-blue-500' : 'bg-orange-500'}`} />
+
+                    <CardHeader className="pb-2 pt-4">
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${v.tipo === 'BUSCA' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300' : 'bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300'}`}>
+                              {v.tipo === 'BUSCA' ? '🐾 Busca' : '📦 Entrega'}
+                            </span>
+                            {isUrgente(v.data_hora) && (
+                              <span className="text-[10px] text-amber-500 font-bold flex items-center gap-1">
+                                <AlertCircle className="w-3 h-3" /> Urgente
+                              </span>
+                            )}
+                          </div>
+                          <CardTitle className="text-lg">{v.pet_nome}</CardTitle>
+                          <p className="text-sm text-muted-foreground">{v.cliente_nome}</p>
+                        </div>
+                        <Badge variant={statusVariant[v.status]}>{statusLabels[v.status]}</Badge>
+                      </div>
+                    </CardHeader>
+
+                    <CardContent className="space-y-4">
+                      {/* Info */}
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                          <Clock className="w-4 h-4 flex-shrink-0" />
+                          <span>{formatDataHora(v.data_hora)}</span>
+                        </div>
+                        <div className="flex items-start gap-2 text-sm text-muted-foreground">
+                          <MapPin className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                          <span className="leading-snug">{v.endereco_transporte || 'Endereço não cadastrado'}</span>
+                        </div>
+                        {v.observacoes && (
+                          <div className="text-xs text-muted-foreground bg-secondary rounded-lg p-2">
+                            📝 {v.observacoes}
+                          </div>
                         )}
                       </div>
-                      <CardTitle className="text-lg">{proxima.pet_nome}</CardTitle>
-                      <p className="text-sm text-muted-foreground">{proxima.cliente_nome}</p>
-                    </div>
-                    <Badge variant={statusVariant[proxima.status]}>{statusLabels[proxima.status]}</Badge>
-                  </div>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="space-y-2">
-                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                      <Clock className="w-4 h-4 flex-shrink-0" />
-                      <span>{formatDataHora(proxima.data_hora)}</span>
-                    </div>
-                    <div className="flex items-start gap-2 text-sm text-muted-foreground">
-                      <MapPin className="w-4 h-4 flex-shrink-0 mt-0.5" />
-                      <span className="leading-snug">{proxima.endereco_transporte || 'Endereço não cadastrado'}</span>
-                    </div>
-                    {proxima.observacoes && (
-                      <div className="text-xs text-muted-foreground bg-secondary rounded-lg p-2">
-                        📝 {proxima.observacoes}
+
+                      {/* Ações de comunicação */}
+                      <div className="grid grid-cols-2 gap-2">
+                        <Button variant="outline" className="gap-2" onClick={() => openWaze(v.endereco_transporte)}>
+                          <Navigation className="w-4 h-4" /> Navegar
+                        </Button>
+                        <Button variant="outline" className="gap-2 text-green-600 hover:text-green-700 hover:bg-green-50 dark:hover:bg-green-900/20"
+                          onClick={() => openWhatsApp(v.cliente_whatsapp || null, v.pet_nome)}>
+                          <MessageCircle className="w-4 h-4" /> Avisar
+                        </Button>
                       </div>
-                    )}
-                  </div>
 
-                  <div className="grid grid-cols-2 gap-2">
-                    <Button variant="outline" className="gap-2" onClick={() => openWaze(proxima.endereco_transporte)}>
-                      <Navigation className="w-4 h-4" /> Navegar
-                    </Button>
-                    <Button variant="outline" className="gap-2 text-green-600 hover:text-green-700 hover:bg-green-50 dark:hover:bg-green-900/20" onClick={() => openWhatsApp(proxima.cliente_whatsapp || null, proxima.pet_nome)}>
-                      <MessageCircle className="w-4 h-4" /> Avisar
-                    </Button>
-                  </div>
-
-                  <div className="border-t border-border pt-3">
-                    {proxima.status === 'AGUARDANDO' && (
-                      <Button className="w-full gap-2" size="lg" disabled={atualizando === proxima.id}
-                        onClick={() => handleStatusChange(proxima.id, 'A_CAMINHO')}>
-                        <Truck className="w-4 h-4" />
-                        {atualizando === proxima.id ? 'Atualizando...' : 'Sair para o destino'}
-                      </Button>
-                    )}
-                    {proxima.status === 'A_CAMINHO' && (
-                      <Button className="w-full gap-2 bg-green-600 hover:bg-green-700 text-white" size="lg"
-                        disabled={atualizando === proxima.id}
-                        onClick={() => handleStatusChange(proxima.id, 'CONCLUIDO')}>
-                        <CheckCircle className="w-4 h-4" />
-                        {atualizando === proxima.id ? 'Finalizando...' : 'Marcar como Concluída'}
-                      </Button>
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
+                      {/* Ação de status */}
+                      <div className="border-t border-border pt-3">
+                        {v.status === 'AGUARDANDO' && (
+                          <Button className="w-full gap-2" size="lg" disabled={atualizando === v.id}
+                            onClick={() => handleStatusChange(v.id, 'A_CAMINHO')}>
+                            <Truck className="w-4 h-4" />
+                            {atualizando === v.id ? 'Atualizando...' : 'Sair para o destino'}
+                          </Button>
+                        )}
+                        {v.status === 'A_CAMINHO' && (
+                          <Button className="w-full gap-2 bg-green-600 hover:bg-green-700 text-white" size="lg"
+                            disabled={atualizando === v.id}
+                            onClick={() => handleStatusChange(v.id, 'CONCLUIDO')}>
+                            <CheckCircle className="w-4 h-4" />
+                            {atualizando === v.id ? 'Finalizando...' : 'Marcar como Concluída'}
+                          </Button>
+                        )}
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
             ) : (
               <Card>
                 <CardContent className="flex flex-col items-center justify-center py-8 text-center">
@@ -370,39 +390,6 @@ export default function DriverDashboard() {
               </Card>
             )}
           </section>
-
-          {/* ── Mais Teles de Hoje ─────────── */}
-          {restantes.length > 0 && (
-            <section>
-              <h2 className="text-xs font-bold text-muted-foreground uppercase tracking-widest mb-3">Mais Teles de Hoje</h2>
-              <div className="space-y-2">
-                {restantes.map(v => (
-                  <Card key={v.id} className="shadow-sm">
-                    <CardContent className="flex items-center justify-between gap-3 py-3 px-4">
-                      <div className="flex items-center gap-3 min-w-0">
-                        <div className={`w-1 h-10 rounded-full flex-shrink-0 ${v.tipo === 'BUSCA' ? 'bg-blue-500' : 'bg-orange-500'}`} />
-                        <div className="min-w-0">
-                          <p className="font-medium text-sm truncate text-foreground">{v.pet_nome} <span className="text-muted-foreground font-normal text-xs">({v.tipo})</span></p>
-                          <p className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
-                            <Clock className="w-3 h-3" /> {formatHora(v.data_hora)}
-                            {isUrgente(v.data_hora) && <span className="text-amber-500 ml-1">⚡</span>}
-                          </p>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-1 flex-shrink-0">
-                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openWaze(v.endereco_transporte)}>
-                          <Navigation className="w-4 h-4" />
-                        </Button>
-                        <Button variant="ghost" size="icon" className="h-8 w-8 text-green-600" onClick={() => openWhatsApp(v.cliente_whatsapp || null, v.pet_nome)}>
-                          <MessageCircle className="w-4 h-4" />
-                        </Button>
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))}
-              </div>
-            </section>
-          )}
 
           {/* ── Teles Concluídas Hoje ──────── */}
           {conclHoje.length > 0 && (
