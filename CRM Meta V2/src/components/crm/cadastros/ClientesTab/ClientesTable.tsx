@@ -1,5 +1,5 @@
-import { Customer } from "@/lib/crm-data";
 import { Edit2, Trash2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
 
 interface ClientesTableProps {
   customers: Customer[];
@@ -42,20 +42,24 @@ export function ClientesTable({ customers, loading, onEdit, onDelete }: Clientes
                 <td className="py-3 px-4 text-sm">{c.whatsapp || c.telefone || '-'}</td>
                 <td className="py-3 px-4 text-sm hidden md:table-cell">{c.email || '-'}</td>
                 <td className="py-3 px-4 text-sm text-center">
-                  <button
+                  <Button
+                    variant="ghost"
+                    size="icon"
                     onClick={() => onEdit(c)}
-                    className="p-1.5 text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-md transition-colors mr-2"
+                    className="h-8 w-8 text-blue-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 mr-1"
                     title="Editar tutor"
                   >
                     <Edit2 size={16} />
-                  </button>
-                  <button
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
                     onClick={() => onDelete(c.id)}
-                    className="p-1.5 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-md transition-colors"
+                    className="h-8 w-8 text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20"
                     title="Deletar tutor"
                   >
                     <Trash2 size={16} />
-                  </button>
+                  </Button>
                 </td>
               </tr>
             ))

@@ -60,7 +60,16 @@ export async function fetchCustomersWithPets(): Promise<(Customer & { pets: Pet[
 export async function addCustomer(customer: Omit<Customer, 'id'>): Promise<Customer> {
   const user = await getAuthUser();
   const validated = validateCustomerInput(customer);
-  const { data, error } = await supabase.from('customers').insert({ ...validated, user_id: user.id } as any).select().single();
+  
+  const { data, error } = await supabase
+    .from('customers')
+    .insert({ 
+      ...validated, 
+      user_id: user.id 
+    })
+    .select()
+    .single();
+
   if (error) throw handleSupabaseError(error, 'addCustomer');
   return data as Customer;
 }
@@ -68,13 +77,21 @@ export async function addCustomer(customer: Omit<Customer, 'id'>): Promise<Custo
 export async function updateCustomer(id: string, customer: Partial<Omit<Customer, 'id'>>) {
   return withErrorHandler(
     async () => {
-      const validated = validateCustomerInput({ nome: 'placeholder', ...customer });
-      const { nome: _ignored, ...updateData } = customer;
-      const finalData = Object.keys(validated).reduce((acc, key) => {
-        if (key in customer) acc[key] = (validated as any)[key];
-        return acc;
-      }, {} as Record<string, any>);
-      const { error } = await supabase.from('customers').update(finalData).eq('id', id);
+      // Validamos o que foi enviado (usando nome placeholder se omitido para passar no schema)
+      const validated = validateCustomerInput({ 
+        nome: customer.nome || 'Validation Placeholder', 
+        ...customer 
+      });
+
+      // Removemos o placeholder se ele foi usado
+      const updateData = { ...validated };
+      if (!customer.nome) delete (updateData as any).nome;
+
+      const { error } = await supabase
+        .from('customers')
+        .update(updateData)
+        .eq('id', id);
+
       if (error) throw handleSupabaseError(error, 'updateCustomer');
     },
     'updateCustomer',

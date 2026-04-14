@@ -100,19 +100,7 @@ export default function WizardCadastroModal({
 
       // Call parent handler
       await onSaveCompleto(
-        {
-          nome: tutor.nome,
-          telefone: tutor.telefone,
-          whatsapp: tutor.whatsapp,
-          email: tutor.email,
-          observacoes: tutor.observacoes,
-          cep: tutor.cep,
-          endereco: tutor.endereco,
-          numero: tutor.numero,
-          bairro: tutor.bairro,
-          cidade: tutor.cidade,
-          complemento: tutor.complemento
-        },
+        tutor,
         validPets,
         validPurchases
       );

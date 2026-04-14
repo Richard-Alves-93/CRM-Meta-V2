@@ -107,18 +107,19 @@ export function useCadastrosData(): UseCadastrosDataReturn {
   }, [loadData]);
 
   const handleDeleteCliente = useCallback(async (id: string) => {
-    if (!confirm("Tem certeza que deseja remover este tutor? Pets vinculados também serão removidos.")) return;
+    if (!window.confirm("Tem certeza que deseja remover este tutor? Pets vinculados também serão removidos.")) return;
+
     try {
       await deleteCustomer(id);
 
-      // Atualização de estado removendo o item da lista
       setCustomers(prev => prev.filter(c => c.id !== id));
       setPets(prev => prev.filter(p => p.customer_id !== id));
 
-      toast.success("Tutor removido permanentemente!");
-    } catch (error) {
-      console.error(error);
-      toast.error("Erro ao remover cliente.");
+      toast.success("Tutor removido!");
+    } catch (err: any) {
+      console.error("[CRM] Erro ao remover tutor:", err);
+      const msg = err.userMessage || err.message || "Erro inesperado";
+      toast.error(`Falha: ${msg}`);
     }
   }, []);
 
@@ -176,7 +177,7 @@ export function useCadastrosData(): UseCadastrosDataReturn {
   }, [loadData]);
 
   const handleDeletePet = useCallback(async (id: string) => {
-    if (!confirm("Tem certeza que deseja remover este pet?")) return;
+    if (!window.confirm("Tem certeza que deseja remover este pet?")) return;
     try {
       await deletePet(id);
 
@@ -209,7 +210,7 @@ export function useCadastrosData(): UseCadastrosDataReturn {
   }, [loadData]);
 
   const handleDeleteProduto = useCallback(async (id: string) => {
-    if (!confirm("Tem certeza que deseja remover este produto? O histórico de compras será mantido, mas não será possível vinculá-lo a novas.")) return;
+    if (!window.confirm("Tem certeza que deseja remover este produto? O histórico de compras será mantido, mas não será possível vinculá-lo a novas.")) return;
     try {
       await deleteProduct(id);
 
