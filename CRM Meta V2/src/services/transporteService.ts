@@ -41,19 +41,32 @@ export const transporteService = {
     }));
   },
 
-  // Busca apenas transportes válidos para o Motorista Logado
+  // Busca apenas transportes válidos para o Motorista Logado (de hoje em diante)
   async fetchMeusTransportes(): Promise<Transporte[]> {
-     const { data: session } = await supabase.auth.getSession();
-     if (!session.session?.user) throw new Error("Não autenticado");
+    const { data: session } = await supabase.auth.getSession();
+    if (!session.session?.user) throw new Error("Não autenticado");
 
-     const { data, error } = await supabase
+    // Início do dia de hoje (00:00:00)
+    const hoje = new Date();
+    hoje.setHours(0, 0, 0, 0);
+
+    const { data, error } = await supabase
       .from('transportes')
       .select(`
         *,
-        pet:pets(nome),
+        pet:pets (
+          id,
+          nome,
+          customer:customers (
+            id,
+            nome,
+            whatsapp
+          )
+        ),
         motorista:profiles!transportes_motorista_id_fkey (display_name)
       `)
       .eq('motorista_id', session.session.user.id)
+      .gte('data_hora', hoje.toISOString())
       .order('data_hora', { ascending: true });
 
     if (error) throw error;
@@ -63,7 +76,9 @@ export const transporteService = {
       tipo: item.tipo as TransporteTipo,
       status: item.status as TransporteStatus,
       motorista_nome: item.motorista?.display_name || 'Eu',
-      pet_nome: item.pet?.nome || 'Pet'
+      pet_nome: item.pet?.nome || 'Pet',
+      cliente_nome: item.pet?.customer?.nome || 'Tutor não informado',
+      cliente_whatsapp: item.pet?.customer?.whatsapp || null,
     }));
   },
 
