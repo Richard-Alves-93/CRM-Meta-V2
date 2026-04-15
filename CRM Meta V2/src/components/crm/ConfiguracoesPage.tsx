@@ -62,6 +62,8 @@ const ConfiguracoesPage = ({ db, onRefresh, customLogo, onLogoChange }: Configur
     document.documentElement.style.setProperty('--sidebar-primary', hexToHslStr(val));
     document.documentElement.style.setProperty('--sidebar-ring', hexToHslStr(val));
 
+    console.log('[Config] Mudando cor para:', val, '| tenantId:', tenantId);
+
     // Persiste na tabela tenants (compartilhada com todos os usuários do tenant)
     if (tenantId) {
       supabase
@@ -69,13 +71,24 @@ const ConfiguracoesPage = ({ db, onRefresh, customLogo, onLogoChange }: Configur
         .update({ primary_color: val } as any)
         .eq('id', tenantId)
         .then(({ error }) => {
-          if (error) console.warn('[Cores] Erro ao salvar cor no tenant:', error.message);
+          if (error) console.warn('[Config] Erro ao salvar cor no tenant:', error.message);
+          else console.log('[Config] Cor salva no tenant com sucesso!');
+        });
+    } else {
+      // Fallback: salva em TODOS os tenants (setup single-tenant)
+      console.warn('[Config] tenantId nulo! Salvando em todos os tenants...');
+      (supabase
+        .from('tenants')
+        .update({ primary_color: val } as any) as any)
+        .then(({ error }: any) => {
+          if (error) console.warn('[Config] Erro ao salvar cor em tenants:', error.message);
+          else console.log('[Config] Cor salva em todos os tenants!');
         });
     }
 
-    // Também salva no user_metadata para compatibilidade com o driver
+    // Também salva no user_metadata para compatibilidade
     supabase.auth.updateUser({ data: { primary_color: val } }).catch(err => {
-      console.warn('[Cores] Erro ao salvar cor no user_metadata:', err);
+      console.warn('[Config] Erro ao salvar cor no user_metadata:', err);
     });
   };
 
