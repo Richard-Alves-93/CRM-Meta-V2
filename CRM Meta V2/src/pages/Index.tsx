@@ -30,17 +30,24 @@ const RecomprasPage = lazy(() => import("@/components/crm/RecomprasPage"));
 const RelatoriosPage = lazy(() => import("@/components/crm/RelatoriosPage"));
 const ConfiguracoesPage = lazy(() => import("@/components/crm/ConfiguracoesPage"));
 const AgendamentosPage = lazy(() => import("@/pages/AgendamentosPage"));
+const EquipePage = lazy(() => import("@/pages/EquipePage"));
 import MasterAdminDashboard from "@/modules/master/pages/MasterAdminPage";
+import WelcomePage from "@/pages/WelcomePage";
 import DriverDashboard from "./DriverDashboard";
+
 const Index = () => {
-  const { user, role, tenantId, signOut } = useAuth();
+  const { user, role, tenantId, signOut, hasPermission } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
 
   const routeToPage = (pathname: string): CrmPage | 'admin' => {
     const path = pathname === "/" ? "dashboard" : pathname.replace(/^\//, "");
     if (path.startsWith('admin')) return 'admin';
-    const validPages: (CrmPage | 'admin')[] = ["dashboard", "lancamentos", "metas", "cadastros", "recompras", "agendamentos", "relatorios", "configuracoes", "admin"];
+    const validPages: (CrmPage | 'admin')[] = [
+        "dashboard", "lancamentos", "metas", "cadastros", 
+        "recompras", "agendamentos", "relatorios", "configuracoes", 
+        "admin", "equipe"
+    ];
     return validPages.includes(path as any) ? (path as any) : "dashboard";
   };
 
@@ -90,14 +97,17 @@ const Index = () => {
         }
       }
 
-      const data = await fetchDatabase();
-      setDb(data);
+      // Só busca dados do banco se tiver permissão mínima (lancamentos ou dashboard)
+      if (hasPermission('view_sales') || hasPermission('view_dashboard')) {
+        const data = await fetchDatabase();
+        setDb(data);
+      }
     } catch (err) {
       console.error("Error fetching data:", err);
     } finally {
       setLoading(false);
     }
-  }, [page, tenantId]);
+  }, [page, tenantId, hasPermission]);
 
   useEffect(() => { refresh(); }, [refresh]);
 
@@ -105,7 +115,7 @@ const Index = () => {
     if (loading) return;
 
     const checkGoals = () => {
-      if (db.metas.length === 0) return;
+      if (!hasPermission('view_goals') || db.metas.length === 0) return;
 
       if (shouldAskNextMonthGoals()) {
         setGoalReminderOpen(true);
@@ -140,7 +150,7 @@ const Index = () => {
     checkGoals();
     const interval = setInterval(checkGoals, 1000 * 60 * 60);
     return () => clearInterval(interval);
-  }, [db.metas.length, loading]);
+  }, [db.metas.length, loading, hasPermission]);
 
   const handleSaveMeta = async (nome: string, valor: number, descricao: string) => {
     if (editingMeta) await updateMeta(editingMeta.id, nome, valor, descricao);
@@ -209,7 +219,6 @@ const Index = () => {
 
   const displayName = user?.user_metadata?.full_name || user?.user_metadata?.name || user?.email || "";
   const avatarUrl = user?.user_metadata?.avatar_url || "";
-  const initials = displayName.split(" ").map((n: string) => n[0]).join("").slice(0, 2).toUpperCase();
 
   if (loading) {
     return (
@@ -231,10 +240,18 @@ const Index = () => {
     );
   }
 
+  // Função para checar permissão e retornar componente ou WelcomePage
+  const renderWithPermission = (permission: string, component: React.ReactNode) => {
+    if (hasPermission(permission)) {
+      return component;
+    }
+    return <WelcomePage logoUrl={customLogo} />;
+  };
+
   return (
-    <div className="flex min-h-screen bg-background">
+    <div className="flex min-h-screen bg-background text-foreground selection:bg-primary/20">
       <CrmSidebar 
-        currentPage={page === 'admin' ? 'dashboard' : page} 
+        currentPage={page === 'admin' ? 'dashboard' : page as any} 
         isOpen={isSidebarOpen}
         onNavigate={(p) => { 
           if (p === 'dashboard' && role === 'master_admin' && location.pathname.startsWith('/admin')) {
@@ -258,75 +275,98 @@ const Index = () => {
               <Menu size={22} />
             </button>
             <div className="hidden md:block">
-              <h2 className="text-sm font-medium text-muted-foreground">Bem-vindo de volta,</h2>
-              <p className="text-lg font-bold text-foreground leading-tight">{displayName}</p>
+              <h2 className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/60">Sessão Ativa</h2>
+              <p className="text-base font-bold text-foreground leading-tight">Olá, {displayName.split(' ')[0]}</p>
             </div>
           </div>
           
           <div className="flex items-center gap-4">
             <div className="hidden sm:flex flex-col items-end">
-              <span className="text-sm font-bold text-foreground">{displayName}</span>
-              <span className="text-[10px] uppercase tracking-widest font-semibold text-primary px-2 py-0.5 rounded-full bg-primary/10 border border-primary/20">
-                {role === 'master_admin' ? 'Administrador Master' : role === 'driver' ? 'Motorista' : 'Usuário'}
+              <span className="text-xs font-bold text-foreground">{displayName}</span>
+              <span className="text-[9px] uppercase tracking-tighter font-black text-primary px-2 py-0.5 rounded-full bg-primary/10 border border-primary/20">
+                {role === 'master_admin' ? 'SYSTEM MASTER' : role === 'tenant_admin' ? 'ADMIN EMPRESA' : 'COLABORADOR'}
               </span>
             </div>
             <UserNav user={user} role={role} onSignOut={signOut} />
           </div>
         </header>
 
-        <div className="flex-1 p-4 md:p-8 overflow-x-hidden">
+        <div className="flex-1 p-4 md:p-8 overflow-x-hidden relative">
           {page === "admin" && (
             <PageSuspense>
               <MasterAdminDashboard />
             </PageSuspense>
           )}
           {page === "dashboard" && (
-            <DashboardPage db={db} onOpenLancamento={() => { setEditingLanc(null); setLancModalOpen(true); }}
-              onEditMeta={handleEditMeta} onDeleteMeta={handleDeleteMeta}
-              onNavigateToRecompras={() => { navigate('/recompras'); setIsSidebarOpen(false); }} />
+            renderWithPermission("view_dashboard", (
+              <DashboardPage db={db} onOpenLancamento={() => { setEditingLanc(null); setLancModalOpen(true); }}
+                onEditMeta={handleEditMeta} onDeleteMeta={handleDeleteMeta}
+                onNavigateToRecompras={() => { navigate('/recompras'); setIsSidebarOpen(false); }} />
+            ))
           )}
           {page === "lancamentos" && (
             <PageSuspense>
-              <LancamentosPage db={db} onAdd={handleAddLancInline}
-                onEdit={handleEditLanc} onDelete={handleDeleteLanc}
-                onOpenModal={() => { setEditingLanc(null); setLancModalOpen(true); }} />
+              {renderWithPermission("view_sales", (
+                <LancamentosPage db={db} onAdd={handleAddLancInline}
+                  onEdit={handleEditLanc} onDelete={handleDeleteLanc}
+                  onOpenModal={() => { setEditingLanc(null); setLancModalOpen(true); }} />
+              ))}
             </PageSuspense>
           )}
           {page === "metas" && (
             <PageSuspense>
-              <MetasPage db={db} onAdd={() => { setEditingMeta(null); setMetaModalOpen(true); }}
-                onEdit={handleEditMeta} onDelete={handleDeleteMeta} />
+              {renderWithPermission("view_goals", (
+                <MetasPage db={db} onAdd={() => { setEditingMeta(null); setMetaModalOpen(true); }}
+                  onEdit={handleEditMeta} onDelete={handleDeleteMeta} />
+              ))}
             </PageSuspense>
           )}
           {page === "cadastros" && (
             <PageSuspense>
-              <CadastrosPage />
+              {renderWithPermission("view_customers", (
+                <CadastrosPage />
+              ))}
             </PageSuspense>
           )}
           {page === "recompras" && (
             <PageSuspense>
-              <RecomprasPage />
+              {renderWithPermission("view_sales", (
+                <RecomprasPage />
+              ))}
             </PageSuspense>
           )}
           {page === "relatorios" && (
             <PageSuspense>
-              <RelatoriosPage db={db} onExportExcel={handleExportExcel} />
+              {renderWithPermission("view_reports", (
+                <RelatoriosPage db={db} onExportExcel={handleExportExcel} />
+              ))}
             </PageSuspense>
           )}
           {page === "agendamentos" && (
             <PageSuspense>
-              <AgendamentosPage />
+               {renderWithPermission("view_logistics", (
+                <AgendamentosPage />
+              ))}
+            </PageSuspense>
+          )}
+          {page === "equipe" && (
+            <PageSuspense>
+               {renderWithPermission("manage_team", (
+                <EquipePage />
+              ))}
             </PageSuspense>
           )}
           {page === "configuracoes" && (
             <PageSuspense>
-              <ConfiguracoesPage db={db} onRefresh={refresh} customLogo={customLogo} onLogoChange={setCustomLogo} />
+              {renderWithPermission("view_settings", (
+                <ConfiguracoesPage db={db} onRefresh={refresh} customLogo={customLogo} onLogoChange={setCustomLogo} />
+              ))}
             </PageSuspense>
           )}
         </div>
 
-        <footer className="bg-card border-t border-border py-4 px-8 text-center text-[11px] sm:text-xs text-muted-foreground">
-          © {new Date().getFullYear()} CRM Dashboard • Desenvolvido por Richard Alves
+        <footer className="bg-card border-t border-border py-4 px-8 text-center text-[11px] sm:text-xs text-muted-foreground/60 font-medium">
+          © {new Date().getFullYear()} CRM DOMINUS • Multi-tenant SaaS Engine
         </footer>
       </main>
 

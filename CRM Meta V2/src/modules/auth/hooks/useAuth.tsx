@@ -8,8 +8,11 @@ interface AuthCtx {
   loading: boolean;
   role: string | null;
   tenantId: string | null;
+  permissions: any;
+  sectorId: string | null;
   signOut: () => Promise<void>;
   refreshProfile: () => Promise<void>;
+  hasPermission: (key: string) => boolean;
 }
 
 const AuthContext = createContext<AuthCtx>({ 
@@ -18,8 +21,11 @@ const AuthContext = createContext<AuthCtx>({
   loading: true, 
   role: null, 
   tenantId: null,
+  permissions: {},
+  sectorId: null,
   signOut: async () => {},
-  refreshProfile: async () => {} 
+  refreshProfile: async () => {},
+  hasPermission: () => false
 });
 
 export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
@@ -27,6 +33,8 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [session, setSession] = useState<Session | null>(null);
   const [role, setRole] = useState<string | null>(null);
   const [tenantId, setTenantId] = useState<string | null>(null);
+  const [permissions, setPermissions] = useState<any>({});
+  const [sectorId, setSectorId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   const fetchProfile = async (uid: string, currentUser?: User) => {
@@ -34,7 +42,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       console.log('[Auth] Buscando perfil do usuário:', uid);
       const { data, error } = await supabase
         .from('profiles')
-        .select('role, tenant_id')
+        .select('role, tenant_id, permissions, sector_id')
         .eq('user_id', uid)
         .single();
       
@@ -93,6 +101,8 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         
         setRole(data.role);
         setTenantId(currentTenantId);
+        setPermissions(data.permissions || {});
+        setSectorId(data.sector_id);
       }
     } catch (err) {
       console.error('[Auth] Erro crítico no fetchProfile:', err);
@@ -105,7 +115,6 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     let isMounted = true;
 
     const initializeAuth = async () => {
-      // 1. Check current session immediately (Fix for F5 hang)
       const { data: { session: initialSession } } = await supabase.auth.getSession();
       
       if (isMounted) {
@@ -123,7 +132,6 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 
     initializeAuth();
 
-    // 2. Monitora mudanças de autenticação futuras
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if (!isMounted) return;
       
@@ -133,11 +141,12 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         setUser(null);
         setRole(null);
         setTenantId(null);
+        setPermissions({});
+        setSectorId(null);
         setLoading(false);
       } else if (session) {
         setSession(session);
         setUser(session.user);
-        // Only fetch if we are not already loading or if user changed
         fetchProfile(session.user.id, session.user);
       }
     });
@@ -154,14 +163,36 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     setSession(null);
     setRole(null);
     setTenantId(null);
+    setPermissions({});
+    setSectorId(null);
   };
 
   const refreshProfile = async () => {
     if (user) await fetchProfile(user.id);
   };
 
+  const hasPermission = (key: string) => {
+    // Master admin tem acesso a tudo
+    if (role === 'master_admin') return true;
+    
+    // Admins da empresa também têm acesso amplo por padrão, 
+    // a menos que queiramos restringi-los via JSON também.
+    // Para simplificar: tenant_admin tem tudo, exceto o que for explicitamente FALSE no JSON (se quisermos).
+    // Mas o usuário pediu "admin pode customizar cada usuário", então vamos checar o JSON sem distinção.
+    
+    // Se não houver permissões definidas, mas for admin, retornamos true (ou tratamos como whitelist)
+    if (role === 'tenant_admin' && (!permissions || Object.keys(permissions).length === 0)) {
+        return true;
+    }
+
+    return permissions[key] === true;
+  };
+
   return (
-    <AuthContext.Provider value={{ user, session, loading, role, tenantId, signOut, refreshProfile }}>
+    <AuthContext.Provider value={{ 
+      user, session, loading, role, tenantId, permissions, sectorId, 
+      signOut, refreshProfile, hasPermission 
+    }}>
       {children}
     </AuthContext.Provider>
   );
