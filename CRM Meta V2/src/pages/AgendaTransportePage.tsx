@@ -172,22 +172,28 @@ export default function AgendaTransportePage() {
           </DialogHeader>
           
           {selectedEvent && (
-            <div className="space-y-4 pt-2">
-              <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+            <div className="space-y-4 pt-4">
+              <div className="grid grid-cols-[110px_1fr] gap-x-4 gap-y-3 text-sm">
                 <div className="font-semibold text-muted-foreground">Pet:</div>
-                <div className="font-bold">{selectedEvent.pet_nome || 'Não informado'}</div>
+                <div className="font-bold text-primary flex items-center gap-2">
+                  🐾 {selectedEvent.pet_nome || 'Não informado'}
+                </div>
                 
                 <div className="font-semibold text-muted-foreground">Tutor:</div>
-                <div>{selectedEvent.cliente_nome || 'Não informado'}</div>
+                <div className="font-medium text-foreground">{selectedEvent.cliente_nome || 'Não informado'}</div>
 
                 <div className="font-semibold text-muted-foreground">Motorista:</div>
-                <div>{selectedEvent.motorista_nome || 'Não atribuído'}</div>
+                <div className="break-all text-muted-foreground">{selectedEvent.motorista_nome || 'Não atribuído'}</div>
 
-                <div className="font-semibold text-muted-foreground">Status do sist.:</div>
-                <div>{selectedEvent.status}</div>
+                <div className="font-semibold text-muted-foreground">Status Sist.:</div>
+                <div className="flex items-center">
+                  <span className="px-2 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20 text-xs font-semibold">
+                    {selectedEvent.status}
+                  </span>
+                </div>
 
-                <div className="font-semibold text-muted-foreground flex-col">Endereço:</div>
-                <div className="line-clamp-3">{selectedEvent.endereco_transporte || 'Não informado'}</div>
+                <div className="font-semibold text-muted-foreground">Endereço:</div>
+                <div className="text-muted-foreground leading-relaxed">{selectedEvent.endereco_transporte || 'Não informado'}</div>
               </div>
 
               <div className="flex gap-2 pt-4">
