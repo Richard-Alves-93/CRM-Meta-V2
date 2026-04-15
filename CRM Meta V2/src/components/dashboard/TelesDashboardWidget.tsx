@@ -58,7 +58,7 @@ export default function TelesDashboardWidget() {
           </h3>
           <p className="text-sm text-muted-foreground">Acompanhamento das Teles do dia</p>
         </div>
-        <Button variant="outline" size="sm" onClick={() => navigate('/transportes')} className="text-xs gap-1 hidden sm:flex">
+        <Button variant="outline" size="sm" onClick={() => navigate('/agendamentos')} className="text-xs gap-1 hidden sm:flex">
           Abrir Agenda <ChevronRight className="w-3 h-3" />
         </Button>
       </div>
@@ -117,7 +117,7 @@ export default function TelesDashboardWidget() {
         </div>
       )}
 
-      <Button variant="outline" size="sm" onClick={() => navigate('/transportes')} className="mt-4 w-full sm:hidden text-xs gap-1">
+      <Button variant="outline" size="sm" onClick={() => navigate('/agendamentos')} className="mt-4 w-full sm:hidden text-xs gap-1">
         Abrir Agenda
       </Button>
     </div>

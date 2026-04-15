@@ -1,8 +1,8 @@
-import { BarChart3, FileText, Target, TrendingUp, Settings, X, Users, RefreshCw, Moon, Sun, Truck } from "lucide-react";
+import { BarChart3, FileText, Target, TrendingUp, Settings, X, Users, RefreshCw, Moon, Sun, Truck, Calendar } from "lucide-react";
 import { APP_VERSION } from "@/config/version";
 import { useTheme } from "@/hooks/useTheme";
 
-export type CrmPage = "dashboard" | "lancamentos" | "metas" | "cadastros" | "recompras" | "relatorios" | "configuracoes" | "transportes";
+export type CrmPage = "dashboard" | "lancamentos" | "metas" | "cadastros" | "recompras" | "relatorios" | "configuracoes" | "agendamentos";
 
 interface CrmSidebarProps {
   currentPage: CrmPage;
@@ -18,7 +18,7 @@ const navItems: { page: CrmPage; label: string; icon: React.ReactNode }[] = [
   { page: "metas", label: "Metas", icon: <Target size={20} /> },
   { page: "cadastros", label: "Cadastros", icon: <Users size={20} /> },
   { page: "recompras", label: "Recompras", icon: <RefreshCw size={20} /> },
-  { page: "transportes", label: "Transportes", icon: <Truck size={20} /> },
+  { page: "agendamentos", label: "Agendamentos", icon: <Calendar size={20} /> },
   { page: "relatorios", label: "Relatórios", icon: <TrendingUp size={20} /> },
   { page: "configuracoes", label: "Configurações", icon: <Settings size={20} /> },
 ];

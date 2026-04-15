@@ -28,7 +28,7 @@ const CadastrosPage = lazy(() => import("@/components/crm/cadastros"));
 const RecomprasPage = lazy(() => import("@/components/crm/RecomprasPage"));
 const RelatoriosPage = lazy(() => import("@/components/crm/RelatoriosPage"));
 const ConfiguracoesPage = lazy(() => import("@/components/crm/ConfiguracoesPage"));
-const AgendaTransportePage = lazy(() => import("@/pages/AgendaTransportePage"));
+const AgendamentosPage = lazy(() => import("@/pages/AgendamentosPage"));
 import MasterAdminDashboard from "./MasterControl";
 import DriverDashboard from "./DriverDashboard";
 const Index = () => {
@@ -39,7 +39,7 @@ const Index = () => {
   const routeToPage = (pathname: string): CrmPage | 'admin' => {
     const path = pathname === "/" ? "dashboard" : pathname.replace(/^\//, "");
     if (path.startsWith('admin')) return 'admin';
-    const validPages: (CrmPage | 'admin')[] = ["dashboard", "lancamentos", "metas", "cadastros", "recompras", "transportes", "relatorios", "configuracoes", "admin"];
+    const validPages: (CrmPage | 'admin')[] = ["dashboard", "lancamentos", "metas", "cadastros", "recompras", "agendamentos", "relatorios", "configuracoes", "admin"];
     return validPages.includes(path as any) ? (path as any) : "dashboard";
   };
 
@@ -322,9 +322,9 @@ const Index = () => {
               <RelatoriosPage db={db} onExportExcel={handleExportExcel} />
             </PageSuspense>
           )}
-          {page === "transportes" && (
+          {page === "agendamentos" && (
             <PageSuspense>
-              <AgendaTransportePage />
+              <AgendamentosPage />
             </PageSuspense>
           )}
           {page === "configuracoes" && (
