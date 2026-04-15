@@ -373,6 +373,11 @@ const ConfiguracoesPage = ({ db, onRefresh, customLogo, onLogoChange }: Configur
                 <p className="text-[10px] text-muted-foreground mt-2 font-medium">Registros totais na conta</p>
               </div>
             </div>
-          </div-
+          </TabsContent>
+        </div>
+      </Tabs>
+    </div>
   );
 };
+
+export default ConfiguracoesPage;
