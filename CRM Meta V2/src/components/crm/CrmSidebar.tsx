@@ -20,7 +20,6 @@ const navItems: { page: CrmPage; label: string; icon: React.ReactNode }[] = [
   { page: "recompras", label: "Recompras", icon: <RefreshCw size={20} /> },
   { page: "agendamentos", label: "Agendamentos", icon: <Calendar size={20} /> },
   { page: "relatorios", label: "Relatórios", icon: <TrendingUp size={20} /> },
-  { page: "configuracoes", label: "Configurações", icon: <Settings size={20} /> },
 ];
 
 const CrmSidebar = ({ currentPage, onNavigate, logoUrl, isOpen, onClose }: CrmSidebarProps) => {
