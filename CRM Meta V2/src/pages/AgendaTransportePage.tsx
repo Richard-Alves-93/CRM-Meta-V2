@@ -183,6 +183,11 @@ export default function AgendaTransportePage() {
                 <div className="font-semibold text-muted-foreground">Tutor:</div>
                 <div className="font-medium text-foreground">{selectedEvent.cliente_nome || 'Não informado'}</div>
 
+                <div className="font-semibold text-muted-foreground">Horário:</div>
+                <div className="font-medium text-foreground">
+                  {format(new Date(selectedEvent.data_hora), 'HH:mm')}
+                </div>
+
                 <div className="font-semibold text-muted-foreground">Motorista:</div>
                 <div className="break-all text-muted-foreground">{selectedEvent.motorista_nome || 'Não atribuído'}</div>
 
