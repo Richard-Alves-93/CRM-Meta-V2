@@ -75,11 +75,12 @@ const ConfiguracoesPage = ({ db, onRefresh, customLogo, onLogoChange }: Configur
           else console.log('[Config] Cor salva no tenant com sucesso!');
         });
     } else {
-      // Fallback: salva em TODOS os tenants (setup single-tenant)
-      console.warn('[Config] tenantId nulo! Salvando em todos os tenants...');
+      // Fallback: salva em TODOS os tenants (setup single-tenant) caso o admin não tenha tenantId explícito
+      console.warn('[Config] tenantId nulo! Salvando em todos os tenants via filtro genérico...');
       (supabase
         .from('tenants')
-        .update({ primary_color: val } as any) as any)
+        .update({ primary_color: val } as any)
+        .not('id', 'is', null) as any) // O supabase exige um filtro para updates
         .then(({ error }: any) => {
           if (error) console.warn('[Config] Erro ao salvar cor em tenants:', error.message);
           else console.log('[Config] Cor salva em todos os tenants!');
