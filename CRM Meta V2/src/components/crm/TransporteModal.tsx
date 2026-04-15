@@ -86,6 +86,10 @@ const TransporteModal = ({ open, onClose, onSuccess }: TransporteModalProps) => 
         
         let fullAddr = parts.join(", ");
         
+        if (c.complemento) {
+          fullAddr += (fullAddr ? " - " : "") + c.complemento;
+        }
+        
         const subParts = [];
         if (c.bairro) subParts.push(c.bairro);
         if (c.cidade) subParts.push(c.cidade);
