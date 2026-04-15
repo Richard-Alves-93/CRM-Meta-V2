@@ -54,9 +54,9 @@ export default function TelesDashboardWidget() {
         <div>
           <h3 className="font-semibold text-card-foreground text-lg flex items-center gap-2">
             <Truck className="w-5 h-5 text-primary" />
-            Logística Diária (Teles Hoje)
+            Logística Diária
           </h3>
-          <p className="text-sm text-muted-foreground">Acompanhamento da frota do dia atual</p>
+          <p className="text-sm text-muted-foreground">Acompanhamento das Teles do dia</p>
         </div>
         <Button variant="outline" size="sm" onClick={() => navigate('/transportes')} className="text-xs gap-1 hidden sm:flex">
           Abrir Agenda <ChevronRight className="w-3 h-3" />
