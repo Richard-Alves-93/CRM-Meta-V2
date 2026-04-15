@@ -4,6 +4,7 @@ import { parseLocalDate } from "@/utils/date";
 import KpiCard from "./KpiCard";
 import MetaCard from "./MetaCard";
 import RecomprasHoje from "../dashboard/RecomprasHoje";
+import TelesDashboardWidget from "../dashboard/TelesDashboardWidget";
 import { Meta } from "@/lib/crm-data";
 import { DollarSign, TrendingDown, Activity, TrendingUp, MessageCircle } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line, Legend } from "recharts";
@@ -217,34 +218,8 @@ const DashboardPage = ({ db, onOpenLancamento, onEditMeta, onDeleteMeta, onNavig
         </div>
       </div>
 
-      <div className="bg-card border border-border rounded-xl p-6 shadow-sm">
-        <h3 className="font-semibold text-card-foreground mb-4">Últimos Lançamentos</h3>
-        <div className="overflow-x-auto -mx-4 md:mx-0 px-4 md:px-0 pb-4">
-          <div className="min-w-[600px]">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-border">
-                  <th className="text-left text-xs font-semibold text-muted-foreground py-3 px-4 w-1/4">Data</th>
-                  <th className="text-left text-xs font-semibold text-muted-foreground py-3 px-4 w-1/4">Valor Bruto</th>
-                  <th className="text-left text-xs font-semibold text-muted-foreground py-3 px-4 w-1/4">Desconto</th>
-                  <th className="text-left text-xs font-semibold text-muted-foreground py-3 px-4 w-1/4">Valor Líquido</th>
-                </tr>
-              </thead>
-              <tbody>
-                {ultimosLancamentos.length === 0 ? (
-                  <tr><td colSpan={4} className="text-center py-8 text-muted-foreground text-sm">Nenhum lançamento registrado</td></tr>
-                ) : ultimosLancamentos.map(l => (
-                  <tr key={l.id} className="border-b border-border/50 hover:bg-secondary/50 transition-colors">
-                    <td className="py-3 px-4 text-sm">{formatDate(l.data)}</td>
-                    <td className="py-3 px-4 text-sm">{formatCurrency(l.valorBruto)}</td>
-                    <td className="py-3 px-4 text-sm text-warning">{formatCurrency(l.desconto)}</td>
-                    <td className="py-3 px-4 text-sm font-semibold text-success">{formatCurrency(l.valorLiquido)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
+      <div className="mt-8 mb-4">
+        <TelesDashboardWidget />
       </div>
     </div>
   );
