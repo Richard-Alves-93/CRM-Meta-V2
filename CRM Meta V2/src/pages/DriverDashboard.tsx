@@ -463,6 +463,10 @@ export default function DriverDashboard() {
           )}
 
           <div className="h-6" />
+
+          <footer className="py-4 px-6 text-center text-[10px] sm:text-xs text-muted-foreground/60 border-t border-border/50">
+            © {new Date().getFullYear()} CRM Dashboard • Desenvolvido por Richard Alves
+          </footer>
         </main>
       </div>
     </div>

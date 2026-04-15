@@ -334,8 +334,8 @@ const Index = () => {
           )}
         </div>
 
-        <footer className="bg-card border-t border-border py-4 px-8 text-center text-xs text-muted-foreground">
-          © {new Date().getFullYear()} CRM Dashboard. Todos os direitos reservados.
+        <footer className="bg-card border-t border-border py-4 px-8 text-center text-[11px] sm:text-xs text-muted-foreground">
+          © {new Date().getFullYear()} CRM Dashboard • Desenvolvido por Richard Alves
         </footer>
       </main>
 
