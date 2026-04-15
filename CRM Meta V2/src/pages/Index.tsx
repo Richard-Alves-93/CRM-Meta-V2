@@ -30,7 +30,7 @@ const RecomprasPage = lazy(() => import("@/components/crm/RecomprasPage"));
 const RelatoriosPage = lazy(() => import("@/components/crm/RelatoriosPage"));
 const ConfiguracoesPage = lazy(() => import("@/components/crm/ConfiguracoesPage"));
 const AgendamentosPage = lazy(() => import("@/pages/AgendamentosPage"));
-import MasterAdminDashboard from "./MasterControl";
+import MasterAdminDashboard from "@/modules/master/pages/MasterAdminPage";
 import DriverDashboard from "./DriverDashboard";
 const Index = () => {
   const { user, role, tenantId, signOut } = useAuth();
