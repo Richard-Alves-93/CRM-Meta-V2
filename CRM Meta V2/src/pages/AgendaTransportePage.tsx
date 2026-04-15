@@ -33,6 +33,7 @@ export default function AgendaTransportePage() {
   const [loading, setLoading] = useState(true);
   const [selectedEvent, setSelectedEvent] = useState<Transporte | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [transporteParaEditar, setTransporteParaEditar] = useState<Transporte | null>(null);
 
   const [realtimeAtivo, setRealtimeAtivo] = useState(false);
 
@@ -131,7 +132,7 @@ export default function AgendaTransportePage() {
           <Button variant="outline" size="sm" onClick={() => carregarTransportes()} className="gap-2">
             <RefreshCcw className="w-4 h-4" /> Atualizar
           </Button>
-          <Button onClick={() => setIsModalOpen(true)} className="gap-2">
+          <Button onClick={() => { setTransporteParaEditar(null); setIsModalOpen(true); }} className="gap-2">
             <Plus className="w-4 h-4" /> Agendar Transporte
           </Button>
         </div>
@@ -197,11 +198,15 @@ export default function AgendaTransportePage() {
               </div>
 
               <div className="flex gap-2 pt-4">
-                <Button variant="outline" className="flex-1 gap-2" onClick={() => openWaze(selectedEvent.endereco_transporte)}>
-                  <MapPin size={16} /> Waze / Maps
+                <Button variant="outline" className="flex-1 gap-2 border-primary/20 text-primary hover:bg-primary/5 hover:text-primary" onClick={() => { setTransporteParaEditar(selectedEvent); setSelectedEvent(null); setIsModalOpen(true); }}>
+                  Editar
                 </Button>
-                <Button className="flex-1 gap-2 bg-green-600 hover:bg-green-700 text-white" onClick={() => openWhatsApp(selectedEvent.cliente_whatsapp, selectedEvent.motorista_nome)}>
-                  <MessageCircle size={16} /> Status Zap
+                <div className="w-[1px] bg-border my-1 rounded" />
+                <Button variant="outline" className="flex-1 gap-1" onClick={() => openWaze(selectedEvent.endereco_transporte)}>
+                  <MapPin size={16} /> Waze
+                </Button>
+                <Button className="flex-1 gap-1 bg-green-600 hover:bg-green-700 text-white" onClick={() => openWhatsApp(selectedEvent.cliente_whatsapp, selectedEvent.motorista_nome)}>
+                  <MessageCircle size={16} /> Zap
                 </Button>
               </div>
             </div>
@@ -210,8 +215,9 @@ export default function AgendaTransportePage() {
       </Dialog>
       <TransporteModal 
         open={isModalOpen} 
-        onClose={() => setIsModalOpen(false)} 
+        onClose={() => { setIsModalOpen(false); setTransporteParaEditar(null); }} 
         onSuccess={carregarTransportes} 
+        transporteToEdit={transporteParaEditar}
       />
     </div>
   );

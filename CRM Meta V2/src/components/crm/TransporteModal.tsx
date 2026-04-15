@@ -22,13 +22,16 @@ import { ptBR } from "date-fns/locale";
 import { addCustomer } from "@/services/customerService";
 import { addPet } from "@/services/petService";
 
+import { Transporte } from "@/lib/types";
+
 interface TransporteModalProps {
   open: boolean;
   onClose: () => void;
   onSuccess: () => void;
+  transporteToEdit?: Transporte | null;
 }
 
-const TransporteModal = ({ open, onClose, onSuccess }: TransporteModalProps) => {
+const TransporteModal = ({ open, onClose, onSuccess, transporteToEdit }: TransporteModalProps) => {
   const [loading, setLoading] = useState(false);
   
   // Estados para Transporte
@@ -55,22 +58,43 @@ const TransporteModal = ({ open, onClose, onSuccess }: TransporteModalProps) => 
 
   useEffect(() => {
     if (open) {
-      fetchCustomersWithPets().then(setCustomers);
+      fetchCustomersWithPets().then((data) => {
+        setCustomers(data);
+        if (transporteToEdit && transporteToEdit.pet_id) {
+          const c = data.find(curr => curr.pets.some(p => p.id === transporteToEdit.pet_id));
+          if (c) setSelectedCustomerId(c.id);
+        }
+      });
       transporteService.fetchMotoristasDaEmpresa().then(setMotoristas);
       
-      // Reset fields on open
-      setTipo("BUSCA");
-      setDate(undefined);
-      setHora("");
-      setSelectedCustomerId("");
-      setSelectedPetId("");
-      setSelectedMotoristaId("");
-      setEndereco("");
-      setObservacoes("");
-      setIsQuickAdd(false);
-      setQuickTutorName("");
-      setQuickPetName("");
-      setQuickPetRaca("");
+      if (transporteToEdit) {
+        setTipo(transporteToEdit.tipo);
+        if (transporteToEdit.data_hora) {
+          const d = new Date(transporteToEdit.data_hora);
+          setDate(d);
+          setHora(format(d, 'HH:mm'));
+        }
+        setSelectedPetId(transporteToEdit.pet_id || "");
+        setSelectedMotoristaId(transporteToEdit.motorista_id || "");
+        // setTimeout is a small hack to ensure setEndereco doesn't get overridden by Customer Selection Effect
+        setTimeout(() => setEndereco(transporteToEdit.endereco_transporte || ""), 100);
+        setObservacoes(transporteToEdit.observacoes || "");
+        setIsQuickAdd(false);
+      } else {
+        // Reset fields on open for New
+        setTipo("BUSCA");
+        setDate(undefined);
+        setHora("");
+        setSelectedCustomerId("");
+        setSelectedPetId("");
+        setSelectedMotoristaId("");
+        setEndereco("");
+        setObservacoes("");
+        setIsQuickAdd(false);
+        setQuickTutorName("");
+        setQuickPetName("");
+        setQuickPetRaca("");
+      }
     }
   }, [open]);
 
@@ -154,18 +178,31 @@ const TransporteModal = ({ open, onClose, onSuccess }: TransporteModalProps) => 
       const datePart = format(date, "yyyy-MM-dd");
       const dataHoraISO = new Date(`${datePart}T${hora}`).toISOString();
 
-      await transporteService.addTransporte({
-        venda_id: null, 
-        tipo,
-        data_hora: dataHoraISO,
-        motorista_id: selectedMotoristaId,
-        endereco_transporte: endereco,
-        status: "AGUARDANDO",
-        pet_id: finalPetId,
-        observacoes
-      });
-      
-      toast.success("Transporte agendado com sucesso!");
+      if (transporteToEdit) {
+        await transporteService.updateTransporte(transporteToEdit.id, {
+          venda_id: transporteToEdit.venda_id,
+          tipo,
+          data_hora: dataHoraISO,
+          motorista_id: selectedMotoristaId,
+          endereco_transporte: endereco,
+          status: transporteToEdit.status,
+          pet_id: finalPetId,
+          observacoes
+        });
+        toast.success("Transporte atualizado com sucesso!");
+      } else {
+        await transporteService.addTransporte({
+          venda_id: null, 
+          tipo,
+          data_hora: dataHoraISO,
+          motorista_id: selectedMotoristaId,
+          endereco_transporte: endereco,
+          status: "AGUARDANDO",
+          pet_id: finalPetId,
+          observacoes
+        });
+        toast.success("Transporte agendado com sucesso!");
+      }
       onSuccess();
       onClose();
     } catch (error: any) {
@@ -184,7 +221,7 @@ const TransporteModal = ({ open, onClose, onSuccess }: TransporteModalProps) => 
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-primary">
             <Truck className="w-5 h-5" />
-            Novo Agendamento de Transporte
+            {transporteToEdit ? "Editar Agendamento de Transporte" : "Novo Agendamento de Transporte"}
           </DialogTitle>
         </DialogHeader>
         
@@ -426,7 +463,7 @@ const TransporteModal = ({ open, onClose, onSuccess }: TransporteModalProps) => 
             Cancelar
           </Button>
           <Button onClick={handleSave} disabled={loading} className="bg-primary hover:bg-primary/90">
-            {loading ? "Salvando..." : "Agendar Transporte"}
+            {loading ? "Salvando..." : (transporteToEdit ? "Salvar Alterações" : "Agendar Transporte")}
           </Button>
         </DialogFooter>
       </DialogContent>

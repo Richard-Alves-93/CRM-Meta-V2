@@ -167,6 +167,35 @@ export const transporteService = {
     return data;
   },
 
+  // Atualiza um transporte existente
+  async updateTransporte(id: string, transporte: Omit<Transporte, 'id' | 'tenant_id'>) {
+    const { data: session } = await supabase.auth.getSession();
+    if (!session.session?.user) throw new Error("Não autenticado");
+
+    const updatePayload: Record<string, any> = {
+      tipo: transporte.tipo,
+      data_hora: transporte.data_hora,
+      motorista_id: transporte.motorista_id,
+      endereco_transporte: transporte.endereco_transporte,
+      observacoes: transporte.observacoes,
+    };
+
+    if (transporte.pet_id) updatePayload.pet_id = transporte.pet_id;
+
+    const { data, error } = await supabase
+      .from('transportes')
+      .update(updatePayload)
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) {
+      console.error("Erro ao atualizar transporte:", error);
+      throw error;
+    }
+    return data;
+  },
+
   // Atualiza Status (Qualquer driver ou admin pode fazer)
   async updateStatus(id: string, status: TransporteStatus) {
     const { data, error } = await supabase
