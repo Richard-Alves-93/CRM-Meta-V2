@@ -20,6 +20,7 @@ import { toast } from "sonner";
 import { LogOut, Menu } from "lucide-react";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { supabase } from "@/integrations/supabase/client";
+import { UserNav } from "@/components/crm/UserNav";
 
 // Lazy-loaded pages for code splitting
 const LancamentosPage = lazy(() => import("@/components/crm/LancamentosPage"));
@@ -248,38 +249,28 @@ const Index = () => {
       />
 
       <main className="flex-1 flex flex-col min-w-0 transition-all duration-300 md:ml-[250px]">
-        <header className="bg-card border-b border-border px-4 md:px-8 h-16 flex items-center justify-between sticky top-0 z-30">
+        <header className="bg-card border-b border-border px-4 md:px-8 h-20 flex items-center justify-between sticky top-0 z-30 shadow-sm backdrop-blur-md bg-card/90">
           <div className="flex items-center gap-3">
             <button 
               onClick={() => setIsSidebarOpen(true)}
-              className="md:hidden w-10 h-10 flex items-center justify-center rounded-lg hover:bg-secondary text-foreground"
+              className="md:hidden w-10 h-10 flex items-center justify-center rounded-xl bg-secondary/50 hover:bg-secondary text-foreground transition-colors"
             >
-              <Menu size={20} />
+              <Menu size={22} />
             </button>
-            {role === 'master_admin' && (
-              <Button 
-                variant={page === 'admin' ? 'default' : 'outline'} 
-                size="sm" 
-                onClick={() => navigate('/admin')}
-                className="hidden md:flex"
-              >
-                Painel Master
-              </Button>
-            )}
+            <div className="hidden md:block">
+              <h2 className="text-sm font-medium text-muted-foreground">Bem-vindo de volta,</h2>
+              <p className="text-lg font-bold text-foreground leading-tight">{displayName}</p>
+            </div>
           </div>
-          <div className="flex items-center gap-3">
-            <Avatar className="w-8 h-8">
-              <AvatarImage src={avatarUrl} alt={displayName} />
-              <AvatarFallback className="text-xs">{initials}</AvatarFallback>
-            </Avatar>
-            <span className="text-sm font-medium text-card-foreground hidden sm:block">{displayName}</span>
-            <button
-              onClick={signOut}
-              className="w-9 h-9 rounded-lg bg-secondary flex items-center justify-center text-muted-foreground hover:bg-border transition-colors"
-              title="Sair"
-            >
-              <LogOut size={16} />
-            </button>
+          
+          <div className="flex items-center gap-4">
+            <div className="hidden sm:flex flex-col items-end">
+              <span className="text-sm font-bold text-foreground">{displayName}</span>
+              <span className="text-[10px] uppercase tracking-widest font-semibold text-primary px-2 py-0.5 rounded-full bg-primary/10 border border-primary/20">
+                {role === 'master_admin' ? 'Administrador Master' : role === 'driver' ? 'Motorista' : 'Usuário'}
+              </span>
+            </div>
+            <UserNav user={user} role={role} onSignOut={signOut} />
           </div>
         </header>
 
