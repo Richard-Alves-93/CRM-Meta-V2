@@ -115,27 +115,61 @@ export default function DriverDashboard() {
       const { data: session } = await supabase.auth.getSession();
       if (!session.session?.user) return;
 
-      // Busca o tenant_id do profile do motorista
-      const { data: profile, error: profileErr } = await supabase
+      const authUserId = session.session.user.id;
+
+      // 4a. Busca o profile do motorista (id + tenant_id)
+      const { data: profile } = await supabase
         .from('profiles')
-        .select('tenant_id')
-        .eq('user_id', session.session.user.id)
+        .select('id, tenant_id')
+        .eq('user_id', authUserId)
         .single();
 
-      console.log('[DriverDashboard] profile:', profile, profileErr);
-      if (!profile?.tenant_id) return;
+      console.log('[DriverDashboard] profile:', profile);
 
-      // Busca apenas primary_color do tenant (logo_url não existe na tabela tenants)
+      let tenantId = profile?.tenant_id;
+
+      // 4b. Fallback: se tenant_id for null, busca via transportes do motorista
+      if (!tenantId && profile?.id) {
+        const { data: transport } = await (supabase
+          .from('transportes')
+          .select('tenant_id')
+          .eq('motorista_id', profile.id)
+          .not('tenant_id', 'is', null)
+          .limit(1) as any)
+          .single();
+        tenantId = transport?.tenant_id;
+        console.log('[DriverDashboard] tenant_id via transport:', tenantId);
+      }
+
+      // 4c. Fallback 2: busca o tenant do owner/admin
+      if (!tenantId) {
+        const { data: ownerProfile } = await supabase
+          .from('profiles')
+          .select('tenant_id')
+          .in('role', ['owner', 'admin', 'tenant_admin'])
+          .not('tenant_id', 'is', null)
+          .limit(1)
+          .single();
+        tenantId = ownerProfile?.tenant_id;
+        console.log('[DriverDashboard] tenant_id via owner profile:', tenantId);
+      }
+
+      if (!tenantId) {
+        console.warn('[DriverDashboard] Nenhum tenant_id encontrado. Cor padrão mantida.');
+        return;
+      }
+
+      // 4d. Busca primary_color do tenant
       const { data: tenant, error: tenantErr } = await (supabase
         .from('tenants')
         .select('primary_color') as any)
-        .eq('id', profile.tenant_id)
+        .eq('id', tenantId)
         .single();
 
       console.log('[DriverDashboard] tenant:', tenant, tenantErr);
 
       if (tenant?.primary_color) {
-        console.log('[DriverDashboard] Aplicando cor do tenant:', tenant.primary_color);
+        console.log('[DriverDashboard] Aplicando cor:', tenant.primary_color);
         applyPrimaryColor(tenant.primary_color);
       }
     };
