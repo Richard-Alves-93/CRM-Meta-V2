@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { X } from "lucide-react";
 import { Customer } from "@/lib/crm-data";
 import { toast } from "sonner";
+import { formatPhone, formatCEP } from "@/lib/formatters";
 
 interface ClienteModalProps {
   open: boolean;
@@ -9,21 +10,6 @@ interface ClienteModalProps {
   onSave: (customer: Omit<Customer, 'id'>) => Promise<void>;
   editingCustomer?: Customer | null;
 }
-
-const formatPhone = (value: string) => {
-  if (!value) return "";
-  const digits = value.replace(/\D/g, "");
-  if (digits.length <= 10) {
-    return digits
-      .replace(/(\d{2})(\d)/, "($1) $2")
-      .replace(/(\d{4})(\d)/, "$1-$2")
-      .slice(0, 14);
-  }
-  return digits
-    .replace(/(\d{2})(\d)/, "($1) $2")
-    .replace(/(\d{5})(\d)/, "$1-$2")
-    .slice(0, 15);
-};
 
 const ClienteModal = ({ open, onClose, onSave, editingCustomer }: ClienteModalProps) => {
   const [nome, setNome] = useState("");
@@ -78,14 +64,10 @@ const ClienteModal = ({ open, onClose, onSave, editingCustomer }: ClienteModalPr
   };
 
   const handleCEPChange = async (value: string) => {
-    const cleanCEP = value.replace(/\D/g, "");
-    let formattedCEP = cleanCEP;
-    if (cleanCEP.length > 5) {
-      formattedCEP = `${cleanCEP.slice(0, 5)}-${cleanCEP.slice(5, 8)}`;
-    }
+    const formattedCEP = formatCEP(value);
     setCep(formattedCEP);
 
-    if (cleanCEP.length === 8) {
+    const cleanCEP = formattedCEP.replace(/\D/g, "");
       try {
         const response = await fetch(`https://viacep.com.br/ws/${cleanCEP}/json/`);
         const data = await response.json();
@@ -104,7 +86,6 @@ const ClienteModal = ({ open, onClose, onSave, editingCustomer }: ClienteModalPr
       } catch (error) {
         toast.error("Erro ao buscar CEP.");
       }
-    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {

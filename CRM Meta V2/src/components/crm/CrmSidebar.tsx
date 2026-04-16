@@ -1,24 +1,27 @@
-import { BarChart3, FileText, Target, TrendingUp, Settings, X, Users, RefreshCw, Moon, Sun, Truck, Calendar } from "lucide-react";
+import { BarChart3, FileText, Target, TrendingUp, Settings, X, Users, RefreshCw, Moon, Sun, Truck, Calendar, ShoppingCart, ShieldCheck, Menu } from "lucide-react";
 import { APP_VERSION } from "@/config/version";
 import { useTheme } from "@/hooks/useTheme";
-import { useAuth } from "@/modules/auth/hooks/useAuth";
+import { useAuth, useBranding } from "@/modules/auth/hooks/useAuth";
 
-export type CrmPage = "dashboard" | "lancamentos" | "metas" | "cadastros" | "recompras" | "relatorios" | "configuracoes" | "agendamentos" | "equipe";
+export type CrmPage = "dashboard" | "pdv" | "lancamentos" | "metas" | "cadastros" | "recompras" | "relatorios" | "configuracoes" | "agendamentos" | "equipe" | "planos";
 
 interface CrmSidebarProps {
   currentPage: CrmPage;
   onNavigate: (page: CrmPage) => void;
-  logoUrl?: string | null;
   isOpen: boolean;
   onClose: () => void;
 }
 
-const CrmSidebar = ({ currentPage, onNavigate, logoUrl, isOpen, onClose }: CrmSidebarProps) => {
+const CrmSidebar = ({ currentPage, onNavigate, isOpen, onClose }: CrmSidebarProps) => {
   const { theme, toggleTheme } = useTheme();
   const { hasPermission, role } = useAuth();
+  const branding = useBranding();
+
+  const currentLogo = theme === 'dark' ? branding.logoDark : branding.logoLight;
 
   const navItems: { page: CrmPage; label: string; icon: React.ReactNode; permission?: string }[] = [
     { page: "dashboard", label: "Dashboard", icon: <BarChart3 size={20} />, permission: "view_dashboard" },
+    { page: "pdv", label: "PDV (Vendas)", icon: <ShoppingCart size={20} />, permission: "pdv.open" },
     { page: "lancamentos", label: "Lançamentos", icon: <FileText size={20} />, permission: "view_sales" },
     { page: "metas", label: "Metas", icon: <Target size={20} />, permission: "view_goals" },
     { page: "cadastros", label: "Cadastros", icon: <Users size={20} />, permission: "view_customers" },
@@ -54,9 +57,9 @@ const CrmSidebar = ({ currentPage, onNavigate, logoUrl, isOpen, onClose }: CrmSi
             onClick={() => onNavigate("dashboard")}
             title="Ir para o Dashboard"
           >
-            {logoUrl ? (
+            {currentLogo ? (
               <img
-                src={logoUrl}
+                src={currentLogo}
                 alt="Logo CRM"
                 className="max-h-12 w-auto max-w-full object-contain"
               />
@@ -64,7 +67,7 @@ const CrmSidebar = ({ currentPage, onNavigate, logoUrl, isOpen, onClose }: CrmSi
               <img
                 src="/logo-full.png"
                 alt="CRM Pets Logo"
-                className="max-h-10 w-auto max-w-full object-contain brightness-0 dark:brightness-100 invert-1 dark:invert-0"
+                className={`max-h-10 w-auto max-w-full object-contain ${theme === 'light' ? 'brightness-100' : 'brightness-0 invert'}`}
               />
             )}
           </div>
@@ -106,6 +109,20 @@ const CrmSidebar = ({ currentPage, onNavigate, logoUrl, isOpen, onClose }: CrmSi
             >
               <Users size={20} className={currentPage === "equipe" ? "text-primary" : "text-muted-foreground"} />
               Equipe
+            </button>
+          )}
+
+          {role === 'master_admin' && (
+            <button
+              onClick={() => onNavigate("planos")}
+              className={`flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all text-left
+              ${currentPage === "planos"
+                  ? "bg-primary/10 text-primary font-bold"
+                  : "text-sidebar-foreground hover:bg-secondary/50 hover:text-foreground"
+                }`}
+            >
+              <ShieldCheck size={20} className={currentPage === "planos" ? "text-primary" : "text-muted-foreground"} />
+              Planos SaaS
             </button>
           )}
         </nav>

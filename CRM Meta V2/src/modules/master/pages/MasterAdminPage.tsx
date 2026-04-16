@@ -26,6 +26,8 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import ManageTenantModal, { Tenant } from "@/modules/master/components/ManageTenantModal";
 import CreateTenantModal from "@/modules/master/components/CreateTenantModal";
+import PlanManagement from "@/modules/master/components/PlanManagement";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
 
 const MasterAdminPage = () => {
@@ -73,20 +75,27 @@ const MasterAdminPage = () => {
 
   return (
     <div className="space-y-8 animate-in fade-in duration-500">
-      {/* Header com Ação */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight text-foreground flex items-center gap-3">
-            <LayoutDashboard className="w-8 h-8 text-primary" />
-            Painel Master
-          </h1>
-          <p className="text-muted-foreground mt-1">Gerenciamento global de empresas e instâncias no CRM.</p>
-        </div>
-        <Button onClick={() => setIsCreateModalOpen(true)} className="rounded-xl gap-2 font-bold shadow-lg shadow-primary/20 h-12">
-          <Plus className="w-5 h-5" />
-          Nova Empresa
-        </Button>
+      <div className="flex flex-col gap-1 mb-6">
+        <h1 className="text-3xl font-bold tracking-tight text-foreground">Painel Master</h1>
+        <p className="text-muted-foreground text-sm">Gerenciamento global de empresas e instâncias no CRM.</p>
       </div>
+
+      <Tabs defaultValue="empresas" className="w-full">
+        <TabsList className="bg-secondary/20 p-1 rounded-xl mb-6">
+          <TabsTrigger value="empresas" className="rounded-lg px-6 gap-2">
+            <Building2 size={16} /> Empresas
+          </TabsTrigger>
+          <TabsTrigger value="planos" className="rounded-lg px-6 gap-2">
+            <ShieldCheck size={16} /> Planos SaaS
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="empresas" className="space-y-8 outline-none">
+          <div className="flex gap-3 mb-8 flex-wrap">
+            <Button onClick={() => setIsCreateModalOpen(true)} className="rounded-lg font-medium transition-all px-6 gap-2 h-11">
+              <Plus size={18} /> Nova Empresa
+            </Button>
+          </div>
 
       {/* Cards de Métricas Rápidas */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -219,7 +228,13 @@ const MasterAdminPage = () => {
             </TableBody>
           </Table>
         </div>
-      </div>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="planos" className="outline-none">
+          <PlanManagement />
+        </TabsContent>
+      </Tabs>
 
       {/* Modais */}
       <ManageTenantModal 

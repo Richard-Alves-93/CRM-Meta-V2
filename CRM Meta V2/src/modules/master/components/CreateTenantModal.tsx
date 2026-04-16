@@ -5,8 +5,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
-import { Building2, Plus, Sparkles } from "lucide-react";
+import { Building2, Plus, Sparkles, Mail, KeyRound, Loader2 } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { logSystemAction } from "@/modules/master/services/LogService";
+import { SystemPlan } from "../components/PlanManagement";
 
 interface CreateTenantModalProps {
   open: boolean;
@@ -18,6 +20,27 @@ const CreateTenantModal = ({ open, onClose, onSuccess }: CreateTenantModalProps)
   const [loading, setLoading] = useState(false);
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
+  const [adminEmail, setAdminEmail] = useState("");
+  const [plans, setPlans] = useState<SystemPlan[]>([]);
+  const [selectedPlanId, setSelectedPlanId] = useState("essencial");
+  const [creationMode, setCreationMode] = useState<'invite' | 'password'>('invite');
+  const [tempPassword, setTempPassword] = useState("");
+
+  const fetchPlans = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('system_plans')
+        .select('*')
+        .order('price', { ascending: true });
+      if (!error && data) setPlans(data as SystemPlan[]);
+    } catch (err) {
+      console.error("Erro ao buscar planos:", err);
+    }
+  };
+
+  useState(() => {
+    fetchPlans();
+  });
 
   const generateSlug = (val: string) => {
     return val
@@ -40,6 +63,16 @@ const CreateTenantModal = ({ open, onClose, onSuccess }: CreateTenantModalProps)
       return;
     }
 
+    if (!adminEmail.trim()) {
+      toast.error("Por favor, insira o e-mail do administrador da empresa.");
+      return;
+    }
+
+    if (creationMode === 'password' && !tempPassword) {
+      toast.error("Defina a senha provisória para o novo administrador.");
+      return;
+    }
+
     setLoading(true);
     try {
       const inviteCode = Math.random().toString(36).substring(2, 12).toUpperCase();
@@ -49,7 +82,7 @@ const CreateTenantModal = ({ open, onClose, onSuccess }: CreateTenantModalProps)
         .insert({
           name: name.trim(),
           slug: slug || generateSlug(name),
-          plan: 'gratuito',
+          plan_id: selectedPlanId,
           status: 'active'
         } as any)
         .select()
@@ -57,15 +90,42 @@ const CreateTenantModal = ({ open, onClose, onSuccess }: CreateTenantModalProps)
 
       if (error) throw error;
 
+      if (creationMode === 'password') {
+        // MODO 1: Criação direta com senha via RPC
+        const { error: rpcError } = await supabase.rpc('create_user_admin', {
+          p_email: adminEmail.trim(),
+          p_password: tempPassword,
+          p_display_name: `Adm ${name.trim()}`,
+          p_role: 'tenant_admin',
+          p_tenant_id: data.id,
+          p_must_change: true
+        });
+        if (rpcError) throw rpcError;
+      } else {
+        // MODO 2: Convite (pré-cadastro de perfil)
+        const { error: profileError } = await supabase
+          .from('profiles')
+          .insert({
+            tenant_id: data.id,
+            email_temp: adminEmail.trim(),
+            role: 'tenant_admin',
+            status: 'invited',
+            display_name: `Administrador ${name}`
+          });
+        if (profileError) throw profileError;
+      }
+
       await logSystemAction({
         action: 'create_tenant',
         entity: `Tenant: ${name}`,
         details: { id: data.id, schema: 'public' }
       });
 
-      toast.success("Empresa cadastrada com sucesso!");
+      toast.success("Empresa e Administrador cadastrados com sucesso!");
       setName("");
       setSlug("");
+      setAdminEmail("");
+      setTempPassword("");
       onSuccess();
       onClose();
     } catch (err: any) {
@@ -89,7 +149,24 @@ const CreateTenantModal = ({ open, onClose, onSuccess }: CreateTenantModalProps)
           </DialogDescription>
         </DialogHeader>
 
-        <div className="grid gap-6 py-4">
+        <div className="grid gap-4 py-4 max-h-[70vh] overflow-y-auto px-1">
+          <div className="bg-secondary/10 p-1.5 rounded-xl flex gap-1 mb-2">
+            <button
+              type="button"
+              onClick={() => setCreationMode('invite')}
+              className={`flex-1 flex items-center justify-center gap-2 py-1.5 text-xs font-bold rounded-lg transition-all ${creationMode === 'invite' ? 'bg-white shadow-sm text-primary' : 'text-muted-foreground hover:text-foreground'}`}
+            >
+              <Mail size={12} /> Convite via Email
+            </button>
+            <button
+              type="button"
+              onClick={() => setCreationMode('password')}
+              className={`flex-1 flex items-center justify-center gap-2 py-1.5 text-xs font-bold rounded-lg transition-all ${creationMode === 'password' ? 'bg-white shadow-sm text-primary' : 'text-muted-foreground hover:text-foreground'}`}
+            >
+              <KeyRound size={12} /> Senha Direta
+            </button>
+          </div>
+
           <div className="grid gap-2">
             <Label htmlFor="name" className="text-sm font-semibold">Nome da Empresa</Label>
             <Input 
@@ -117,6 +194,51 @@ const CreateTenantModal = ({ open, onClose, onSuccess }: CreateTenantModalProps)
               className="h-11 rounded-xl bg-secondary/30 font-mono text-xs"
             />
           </div>
+
+          <div className="grid gap-2">
+            <Label htmlFor="adminEmail" className="text-sm font-semibold">E-mail do Administrador</Label>
+            <Input 
+              id="adminEmail" 
+              type="email"
+              placeholder="admin@empresa.com" 
+              value={adminEmail} 
+              onChange={(e) => setAdminEmail(e.target.value)}
+              className="h-11 rounded-xl"
+            />
+          </div>
+
+          <div className="grid gap-2">
+            <Label className="text-sm font-semibold">Plano da Empresa</Label>
+            <Select value={selectedPlanId} onValueChange={setSelectedPlanId}>
+              <SelectTrigger className="h-11 rounded-xl bg-background border-border">
+                <SelectValue placeholder="Selecione um plano" />
+              </SelectTrigger>
+              <SelectContent>
+                {plans.map(p => (
+                  <SelectItem key={p.id} value={p.id} className="text-xs font-medium">
+                    {p.name} - R$ {Number(p.price).toLocaleString('pt-BR')}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {creationMode === 'password' && (
+            <div className="grid gap-2 animate-in slide-in-from-top-2">
+              <Label className="text-sm font-semibold">Definir Senha Provisória *</Label>
+              <div className="relative group">
+                <Input 
+                  type="text" 
+                  value={tempPassword} 
+                  onChange={e => setTempPassword(e.target.value)} 
+                  className="rounded-xl h-11 border-border pr-10"
+                  placeholder="Ex: Senha123!"
+                />
+                <KeyRound className="absolute right-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground/30" />
+              </div>
+              <p className="text-[10px] text-amber-600 font-medium italic leading-none">Obrigará o usuário a trocar no primeiro login.</p>
+            </div>
+          )}
         </div>
 
         <DialogFooter className="bg-secondary/10 -mx-6 -mb-6 p-6 mt-2">

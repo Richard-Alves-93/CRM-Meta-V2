@@ -1,19 +1,20 @@
 import { useState, ChangeEvent } from 'react';
-import { formatCurrency, parseCurrency } from '@/utils/currency';
+import { formatCurrencyClean, parseCurrency } from '@/utils/currency';
 
 export function useCurrencyInput(initialValue = 0) {
-  const [displayValue, setDisplayValue] = useState(formatCurrency(initialValue));
+  const [displayValue, setDisplayValue] = useState(formatCurrencyClean(initialValue));
   const [rawValue, setRawValue] = useState(initialValue);
 
   function handleChange(e: ChangeEvent<HTMLInputElement>) {
-    const parsed = parseCurrency(e.target.value);
+    const value = e.target.value;
+    const parsed = parseCurrency(value);
     setRawValue(parsed);
-    setDisplayValue(formatCurrency(parsed));
+    setDisplayValue(formatCurrencyClean(parsed));
   }
 
   function setValue(value: number) {
     setRawValue(value);
-    setDisplayValue(formatCurrency(value));
+    setDisplayValue(formatCurrencyClean(value));
   }
 
   return {

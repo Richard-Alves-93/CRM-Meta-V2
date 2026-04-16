@@ -108,33 +108,38 @@ export const transporteService = {
     }));
   },
 
-  // Insere um novo transporte. O tenant_id é pego pelo profile do logado.
-  async addTransporte(transporte: Omit<Transporte, 'id' | 'tenant_id'>) {
+  // Insere um novo transporte. O tenant_id é pego pelo profile do logado ou injetado manualmente.
+  async addTransporte(transporte: Omit<Transporte, 'id' | 'tenant_id'> & { tenant_id?: string }) {
     const { data: session } = await supabase.auth.getSession();
     if (!session.session?.user) throw new Error("Não autenticado");
 
-    // Tenta pegar o tenant_id do perfil, mas não bloqueia se não existir
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('tenant_id')
-      .eq('user_id', session.session.user.id)
-      .single();
-
-    const tenantId = profile?.tenant_id || null;
+    let tenantId = transporte.tenant_id;
+    
+    // Se não foi passado tenantId, tenta buscar do perfil
+    if (!tenantId) {
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('tenant_id')
+        .eq('user_id', session.session.user.id)
+        .single();
+      tenantId = profile?.tenant_id || null;
+    }
     
     // Avisa no console mas não bloqueia (para facilitar o desenvolvimento)
     if (!tenantId) {
       console.warn('[Transporte] Perfil sem tenant_id. Execute o SQL para vincular o tenant ao usuário.');
     }
 
-    // Corrigir venda_id: se for string vazia, vira null para não dar erro de UUID no Postgres
+    // Limpeza de UUIDs: se for string vazia ou inválida, vira null para o Postgres
     const vendaId = (transporte.venda_id && transporte.venda_id.length > 5) ? transporte.venda_id : null;
+    const motoristaId = (transporte.motorista_id && transporte.motorista_id.length > 5) ? transporte.motorista_id : null;
+    const petId = (transporte.pet_id && transporte.pet_id.length > 5) ? transporte.pet_id : null;
 
     const insertPayload: Record<string, any> = {
       tenant_id: tenantId,
       tipo: transporte.tipo,
       data_hora: transporte.data_hora,
-      motorista_id: transporte.motorista_id,
+      motorista_id: motoristaId,
       endereco_transporte: transporte.endereco_transporte,
       status: 'AGUARDANDO',
       observacoes: transporte.observacoes,
@@ -145,11 +150,11 @@ export const transporteService = {
       insertPayload.venda_id = vendaId;
     }
 
-    // Tenta com pet_id; se a coluna ainda não existe no banco, faz fallback sem ela
+    // Tenta com petId; se a coluna ainda não existe no banco, faz fallback sem ela
     let data: any, error: any;
     
-    if (transporte.pet_id) {
-      const result = await supabase.from('transportes').insert({ ...insertPayload, pet_id: transporte.pet_id }).select().single();
+    if (petId) {
+      const result = await supabase.from('transportes').insert({ ...insertPayload, pet_id: petId }).select().single();
       data = result.data; error = result.error;
       
       // Se o erro for de coluna não encontrada, tenta sem pet_id
@@ -210,11 +215,17 @@ export const transporteService = {
   },
   
   // Lista perfis que são motoristas (drivers) do mesmo tenant
-  async fetchMotoristasDaEmpresa(): Promise<Profile[]> {
-    const { data, error } = await supabase
+  async fetchMotoristasDaEmpresa(tenantId?: string): Promise<Profile[]> {
+    let query = supabase
       .from('profiles')
       .select('*')
       .eq('role', 'driver');
+      
+    if (tenantId) {
+      query = query.eq('tenant_id', tenantId);
+    }
+
+    const { data, error } = await query;
       
     if (error) throw error;
     // O RLS idealmente já filtra pelo id do tenant ou fazemos manual se faltar política

@@ -4,6 +4,7 @@ import { parseLocalDate, formatISODate } from "@/utils/date";
 import { useCurrencyInput } from "@/hooks/useCurrencyInput";
 import KpiCard from "./KpiCard";
 import { Pencil, Trash2, DollarSign, TrendingDown, Wallet } from "lucide-react";
+import { Button } from "@/components/ui/button";
 
 interface LancamentosPageProps {
   db: CrmDatabase;
@@ -23,20 +24,30 @@ const LancamentosPage = ({ db, onAdd, onEdit, onDelete, onOpenModal }: Lancament
   const desconto = useCurrencyInput(0);
 
   const filtered = useMemo(() => {
+    if (!db?.lancamentos) return [];
     let list = db.lancamentos;
     if (filterMonth) {
-      const [y, m] = filterMonth.split("-");
-      list = list.filter(l => {
-        const d = parseLocalDate(l.data);
-        return d.getFullYear() === parseInt(y) && d.getMonth() + 1 === parseInt(m);
-      });
+      try {
+        const [y, m] = filterMonth.split("-");
+        list = list.filter(l => {
+          if (!l.data) return false;
+          const d = parseLocalDate(l.data);
+          return d.getFullYear() === parseInt(y) && d.getMonth() + 1 === parseInt(m);
+        });
+      } catch (e) {
+        console.error("Erro ao filtrar lançamentos:", e);
+      }
     }
-    return [...list].sort((a, b) => new Date(b.data).getTime() - new Date(a.data).getTime());
+    return [...list].sort((a, b) => {
+      const dateA = a.data ? new Date(a.data).getTime() : 0;
+      const dateB = b.data ? new Date(b.data).getTime() : 0;
+      return dateB - dateA;
+    });
   }, [db, filterMonth]);
 
-  const totalBruto = filtered.reduce((s, l) => s + l.valorBruto, 0);
-  const totalDesconto = filtered.reduce((s, l) => s + l.desconto, 0);
-  const totalLiquido = filtered.reduce((s, l) => s + l.valorLiquido, 0);
+  const totalBruto = filtered.reduce((s, l) => s + (Number(l.valorBruto) || 0), 0);
+  const totalDesconto = filtered.reduce((s, l) => s + (Number(l.desconto) || 0), 0);
+  const totalLiquido = filtered.reduce((s, l) => s + (Number(l.valorLiquido) || 0), 0);
 
   const handleSave = () => {
     const v = bruto.rawValue;
@@ -48,15 +59,16 @@ const LancamentosPage = ({ db, onAdd, onEdit, onDelete, onOpenModal }: Lancament
   };
 
   return (
-    <div>
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-foreground mb-1">Lançamentos</h1>
+    <div className="space-y-6">
+      <div className="flex flex-col gap-1 mb-6">
+        <h1 className="text-3xl font-bold tracking-tight text-foreground">Lançamentos</h1>
         <p className="text-muted-foreground text-sm">Registre o faturamento diário. Um lançamento por dia atualiza todas as metas.</p>
-        <div className="flex gap-3 mt-4 flex-wrap">
-          <button onClick={onOpenModal} className="px-4 py-2.5 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 transition-opacity">
-            + Lançar venda do dia
-          </button>
-        </div>
+      </div>
+
+      <div className="flex gap-3 mb-8 flex-wrap">
+        <Button onClick={onOpenModal} className="rounded-lg font-medium transition-all px-6">
+          + Lançar venda do dia
+        </Button>
       </div>
 
       <div className="bg-card border border-border rounded-xl p-4 mb-6 flex items-center gap-3 flex-wrap">
@@ -136,7 +148,7 @@ const LancamentosPage = ({ db, onAdd, onEdit, onDelete, onOpenModal }: Lancament
                   <tr><td colSpan={5} className="text-center py-8 text-muted-foreground text-sm">Nenhum lançamento registrado</td></tr>
                 ) : filtered.map(l => (
                   <tr key={l.id} className="border-b border-border/50 hover:bg-secondary/50 transition-colors">
-                    <td className="py-3 px-4 text-sm">{formatDate(l.data)}</td>
+                    <td className="py-3 px-4 text-sm">{l.data ? formatDate(l.data) : "-"}</td>
                     <td className="py-3 px-4 text-sm">{formatCurrency(l.valorBruto)}</td>
                     <td className="py-3 px-4 text-sm text-warning">{formatCurrency(l.desconto)}</td>
                     <td className="py-3 px-4 text-sm font-semibold text-success">{formatCurrency(l.valorLiquido)}</td>

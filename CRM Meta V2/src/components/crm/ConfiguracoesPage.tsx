@@ -7,51 +7,78 @@ import { supabase, STORAGE_BUCKET } from "@/integrations/supabase/client";
 import { WorkSettingsSection } from "./WorkSettingsSection";
 import { CompanyProfileSection } from "./CompanyProfileSection";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Building, Clock, Database, Info } from "lucide-react";
+import { Building, Clock, Database, Info, Image, Upload, Trash2, Save } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { useBranding } from "@/modules/auth/hooks/useAuth";
+import { SystemSettingsService } from "@/services/SystemSettingsService";
 
 interface ConfiguracoesPageProps {
   db: CrmDatabase;
   onRefresh: () => Promise<void>;
-  customLogo: string | null;
-  onLogoChange: (logo: string | null) => void;
 }
 
-const ConfiguracoesPage = ({ db, onRefresh, customLogo, onLogoChange }: ConfiguracoesPageProps) => {
+const ConfiguracoesPage = ({ db, onRefresh }: ConfiguracoesPageProps) => {
   const [primaryColor, setPrimaryColor] = useState(
     localStorage.getItem('crm_custom_primary_color') || "#3b82f6"
   );
-  const { user, tenantId } = useAuth();
-  const [logoFile, setLogoFile] = useState<File | null>(null);
-  const [logoPreview, setLogoPreview] = useState<string | null>(null);
-  const [isUploadingLogo, setIsUploadingLogo] = useState(false);
-  const [uploadError, setUploadError] = useState<string | null>(null);
+  const { user, tenantId, role, refreshProfile } = useAuth();
+  const branding = useBranding();
+  
+  const [brandingFiles, setBrandingFiles] = useState<Record<string, File | null>>({
+    logo_light: null,
+    logo_dark: null,
+    logo_login: null,
+    favicon: null,
+  });
 
-  const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const [brandingPreviews, setBrandingPreviews] = useState<Record<string, string | null>>({
+    logo_light: null,
+    logo_dark: null,
+    logo_login: null,
+    favicon: null,
+  });
+
+  const [isUploading, setIsUploading] = useState<Record<string, boolean>>({
+    logo_light: false,
+    logo_dark: false,
+    logo_login: false,
+    favicon: false,
+  });
+
+  const handleBrandingUpload = (e: React.ChangeEvent<HTMLInputElement>, type: string) => {
     const file = e.target.files?.[0];
     if (file) {
-      if (logoPreview) {
-        URL.revokeObjectURL(logoPreview);
+      if (brandingPreviews[type]) {
+        URL.revokeObjectURL(brandingPreviews[type]!);
       }
-      setLogoFile(file);
-      setLogoPreview(URL.createObjectURL(file));
+      setBrandingFiles(prev => ({ ...prev, [type]: file }));
+      setBrandingPreviews(prev => ({ ...prev, [type]: URL.createObjectURL(file) }));
     }
   };
 
-  const handleRemoveLogo = async () => {
-    localStorage.removeItem('crm_custom_logo');
-    onLogoChange(null);
-    setLogoFile(null);
-    if (logoPreview) {
-      URL.revokeObjectURL(logoPreview);
-      setLogoPreview(null);
-    }
+  const handleRemoveBranding = async (type: string) => {
+    try {
+      if (confirm(`Deseja remover este item da identidade visual?`)) {
+        const fieldName = `${type}_url`;
+        
+        if (role === 'master_admin') {
+          await SystemSettingsService.updateSettings({ [fieldName]: null });
+        } else if (tenantId) {
+          await supabase.from('tenants').update({ [fieldName]: null }).eq('id', tenantId);
+        }
 
-    const { error: metadataError } = await supabase.auth.updateUser({
-      data: { logo_url: null },
-    });
+        setBrandingFiles(prev => ({ ...prev, [type]: null }));
+        if (brandingPreviews[type]) {
+          URL.revokeObjectURL(brandingPreviews[type]!);
+          setBrandingPreviews(prev => ({ ...prev, [type]: null }));
+        }
 
-    if (metadataError) {
-      console.warn("Erro ao remover logo do Supabase:", metadataError);
+        toast.success("Item removido com sucesso!");
+        await refreshProfile();
+        onRefresh();
+      }
+    } catch (err) {
+      toast.error("Erro ao remover item.");
     }
   };
 
@@ -71,6 +98,7 @@ const ConfiguracoesPage = ({ db, onRefresh, customLogo, onLogoChange }: Configur
         .eq('id', tenantId)
         .then(({ error }) => {
           if (error) console.warn('[Config] Erro ao salvar cor no tenant:', error.message);
+          refreshProfile();
         });
     }
 
@@ -79,95 +107,73 @@ const ConfiguracoesPage = ({ db, onRefresh, customLogo, onLogoChange }: Configur
     });
   };
 
-  const checkStorageBucket = async () => {
-    try {
-      const { data, error } = await supabase.storage.listBuckets();
-      if (error) console.error('Erro buckets:', error.message || error);
-      const hasBucket = data?.some((bucket) => bucket.name === STORAGE_BUCKET);
-      if (!hasBucket) {
-        console.error(`Bucket '${STORAGE_BUCKET}' não encontrado. Verifique o projeto Supabase.`);
-      }
-    } catch (err) {
-      console.error('Erro ao listar buckets do Supabase:', err);
-    }
-  };
+  const handleSaveBranding = async (type: string) => {
+    const file = brandingFiles[type];
+    if (!file) return;
 
-  useEffect(() => {
-    checkStorageBucket();
-  }, []);
-
-  const handleUploadLogo = async () => {
-    if (!logoFile) {
-      toast.error('Selecione um arquivo antes de salvar a logo.');
-      return;
-    }
-
-    const fileExt = logoFile.name.split('.').pop() || 'png';
-    const fileName = `logo-${Date.now()}.${fileExt}`;
+    setIsUploading(prev => ({ ...prev, [type]: true }));
+    const fileExt = file.name.split('.').pop() || 'png';
+    const fileName = `${type}-${Date.now()}.${fileExt}`;
     const bucketName = STORAGE_BUCKET;
 
-    setIsUploadingLogo(true);
-    setUploadError(null);
-
     try {
-      if (customLogo) {
-        try {
-          const oldFileName = customLogo.split('/').pop();
-          if (oldFileName) {
-            await supabase.storage.from(bucketName).remove([decodeURIComponent(oldFileName)]);
-          }
-        } catch (removeErr) {
-          console.warn('Falha ao deletar logo antiga', removeErr);
-        }
-      }
-
-      const { data: uploadData, error: uploadError } = await supabase.storage
+      const { error: uploadError } = await supabase.storage
         .from(bucketName)
-        .upload(fileName, logoFile, {
-          cacheControl: '3600',
-          upsert: true,
-          contentType: logoFile.type,
-        });
+        .upload(fileName, file, { cacheControl: '3600', upsert: true });
 
       if (uploadError) throw uploadError;
 
-      const { data: publicUrlData } = supabase.storage
-        .from(bucketName)
-        .getPublicUrl(fileName);
-
+      const { data: publicUrlData } = supabase.storage.from(bucketName).getPublicUrl(fileName);
       const logoUrl = publicUrlData.publicUrl;
-      localStorage.setItem('crm_custom_logo', logoUrl);
-      onLogoChange(logoUrl);
+      const fieldName = type === 'logo_login' ? 'login_logo_url' : `${type}_url`;
 
-      if (user) {
-        await supabase.auth.updateUser({
-          data: { logo_url: logoUrl },
-        });
+      if (role === 'master_admin') {
+        const success = await SystemSettingsService.updateSettings({ [fieldName]: logoUrl });
+        if (!success) throw new Error("Erro ao atualizar configurações globais.");
+      } else if (tenantId) {
+        const { error: tenantErr } = await supabase.from('tenants').update({ [fieldName]: logoUrl }).eq('id', tenantId);
+        if (tenantErr) throw tenantErr;
       }
 
-      setLogoFile(null);
-      if (logoPreview) {
-        URL.revokeObjectURL(logoPreview);
-        setLogoPreview(null);
-      }
-
-      toast.success('Logo salva com sucesso!');
+      setBrandingFiles(prev => ({ ...prev, [type]: null }));
+      toast.success(`${type.replace('_', ' ')} salvo com sucesso!`);
+      await refreshProfile();
+      onRefresh();
     } catch (err: any) {
-      console.error('Erro ao enviar logo:', err);
-      setUploadError(err?.message || String(err));
-      toast.error('Erro ao enviar logo.');
+      console.error('Erro ao salvar branding:', err);
+      toast.error(`Erro ao salvar: ${err.message || 'Tente novamente'}`);
     } finally {
-      setIsUploadingLogo(false);
+      setIsUploading(prev => ({ ...prev, [type]: false }));
     }
   };
 
+  const handleApplyAllBranding = async () => {
+    const pendingTypes = Object.keys(brandingFiles).filter(type => brandingFiles[type] !== null);
+    if (pendingTypes.length === 0) return;
+
+    const tId = toast.loading("Aplicando nova identidade visual...");
+    try {
+      for (const type of pendingTypes) {
+        await handleSaveBranding(type);
+      }
+      toast.dismiss(tId);
+      toast.success("Toda a identidade visual foi aplicada com sucesso!");
+      await refreshProfile();
+    } catch (err) {
+      toast.dismiss(tId);
+      toast.error("Erro ao aplicar algumas alterações.");
+    }
+  };
+
+  const hasPendingBranding = Object.values(brandingFiles).some(f => f !== null);
+
   useEffect(() => {
     return () => {
-      if (logoPreview) {
-        URL.revokeObjectURL(logoPreview);
-      }
+      Object.values(brandingPreviews).forEach(p => {
+        if (p) URL.revokeObjectURL(p);
+      });
     };
-  }, [logoPreview]);
+  }, []);
 
   const handleImportBackup = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -214,29 +220,29 @@ const ConfiguracoesPage = ({ db, onRefresh, customLogo, onLogoChange }: Configur
 
   return (
     <div className="space-y-6">
-      <div className="mb-2">
-        <h1 className="text-3xl font-bold text-foreground mb-1">Configurações</h1>
+      <div className="flex flex-col gap-1 mb-6">
+        <h1 className="text-3xl font-bold tracking-tight text-foreground">Configurações</h1>
         <p className="text-muted-foreground text-sm">Gerencie dados e preferências do sistema.</p>
       </div>
 
       <Tabs defaultValue="perfil" className="w-full space-y-6">
         <TabsList className="bg-card border border-border p-1 h-auto w-full sm:w-auto flex flex-wrap sm:flex-nowrap gap-1">
-          <TabsTrigger value="perfil" className="flex items-center gap-2 py-2 px-4 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground transition-all">
+          <TabsTrigger value="perfil" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground flex items-center gap-2 py-2 px-4 transition-all rounded-lg">
             <Building className="w-4 h-4" />
             <span className="hidden sm:inline">Meu Perfil & Marca</span>
             <span className="sm:hidden">Perfil</span>
           </TabsTrigger>
-          <TabsTrigger value="jornada" className="flex items-center gap-2 py-2 px-4 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground transition-all">
+          <TabsTrigger value="jornada" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground flex items-center gap-2 py-2 px-4 transition-all rounded-lg">
             <Clock className="w-4 h-4" />
             <span className="hidden sm:inline">Jornada de Trabalho</span>
             <span className="sm:hidden">Jornada</span>
           </TabsTrigger>
-          <TabsTrigger value="backup" className="flex items-center gap-2 py-2 px-4 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground transition-all">
+          <TabsTrigger value="backup" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground flex items-center gap-2 py-2 px-4 transition-all rounded-lg">
             <Database className="w-4 h-4" />
             <span className="hidden sm:inline">Exportar & Importar</span>
             <span className="sm:hidden">Backup</span>
           </TabsTrigger>
-          <TabsTrigger value="sistema" className="flex items-center gap-2 py-2 px-4 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground transition-all">
+          <TabsTrigger value="sistema" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground flex items-center gap-2 py-2 px-4 transition-all rounded-lg">
             <Info className="w-4 h-4" />
             <span className="hidden sm:inline">Informações do Sistema</span>
             <span className="sm:hidden">Sistema</span>
@@ -264,44 +270,93 @@ const ConfiguracoesPage = ({ db, onRefresh, customLogo, onLogoChange }: Configur
                   <div className="p-1 rounded bg-primary/20">🎨</div>
                   Logo e Identidade Visual
                 </h3>
-                <div className="space-y-6">
-                  <div>
-                    <label className="block text-sm font-medium text-muted-foreground mb-3">Logotipo da Barra Lateral</label>
-                    <div className="flex flex-col lg:flex-row items-start lg:items-center gap-8">
-                      <div className="w-48 h-24 border-2 border-dashed border-border rounded-xl flex items-center justify-center bg-background overflow-hidden relative group shadow-inner">
-                        {logoPreview ? (
-                          <img src={logoPreview} alt="Preview" className="max-h-full max-w-full object-contain p-2" />
-                        ) : customLogo ? (
-                          <img src={customLogo} alt="Logo" className="max-h-full max-w-full object-contain p-2" />
-                        ) : (
-                          <span className="text-xs text-muted-foreground">Sem imagem</span>
-                        )}
-                        {(logoPreview || customLogo) && (
-                          <div className="absolute inset-0 bg-black/60 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                            <button onClick={handleRemoveLogo} className="bg-red-500 text-white text-xs font-bold px-3 py-1.5 rounded-lg hover:bg-red-600 transition-colors">
-                              Remover
-                            </button>
+                
+                <div className="space-y-8">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    {[
+                      { id: 'logo_login', label: 'Logo Área de Login', current: branding.logoLogin },
+                      { id: 'logo_light', label: 'Logo Modo Claro (Alt)', current: branding.logoLight },
+                      { id: 'logo_dark', label: 'Logo Modo Escuro', current: branding.logoDark },
+                      { id: 'favicon', label: 'Ícone da Aba (Favicon)', current: branding.favicon },
+                    ].map((item) => (
+                      <div key={item.id} className="space-y-4 p-4 rounded-xl border border-border bg-background/50">
+                        <label className="block text-sm font-semibold text-foreground/80">{item.label}</label>
+                        <div className="flex items-center gap-4">
+                          <div className="w-20 h-20 rounded-lg border-2 border-dashed border-border flex items-center justify-center bg-card overflow-hidden relative group shrink-0">
+                            {brandingPreviews[item.id] || item.current ? (
+                              <img 
+                                src={brandingPreviews[item.id] || item.current!} 
+                                alt="Preview" 
+                                className="max-h-full max-w-full object-contain p-1" 
+                              />
+                            ) : (
+                              <Image className="w-6 h-6 text-muted-foreground/30" />
+                            )}
+                            {(brandingPreviews[item.id] || item.current) && (
+                              <div className="absolute inset-0 bg-black/60 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                                <button 
+                                  onClick={() => handleRemoveBranding(item.id)} 
+                                  className="p-1.5 bg-red-500 rounded-md text-white hover:bg-red-600 transition-colors"
+                                >
+                                  <Trash2 size={14} />
+                                </button>
+                              </div>
+                            )}
                           </div>
-                        )}
+                          
+                          <div className="flex-1 space-y-2">
+                            <input 
+                              type="file" 
+                              id={`file-${item.id}`} 
+                              className="hidden" 
+                              accept="image/*" 
+                              onChange={(e) => handleBrandingUpload(e, item.id)} 
+                            />
+                            <Button 
+                              variant="outline" 
+                              size="sm" 
+                              className="w-full h-8 text-xs gap-2"
+                              onClick={() => document.getElementById(`file-${item.id}`)?.click()}
+                            >
+                              <Upload size={14} /> {brandingPreviews[item.id] ? "Trocar Seleção" : "Escolher Arquivo"}
+                            </Button>
+                            {item.current && !brandingPreviews[item.id] && (
+                              <p className="text-[10px] text-muted-foreground truncate max-w-[120px]">
+                                Já existe um logo salvo.
+                              </p>
+                            )}
+                          </div>
+                        </div>
                       </div>
-                      <div className="flex-1 space-y-4 w-full">
-                        <input type="file" accept="image/*" onChange={handleLogoUpload} className="block w-full text-sm text-muted-foreground file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-primary file:text-primary-foreground hover:file:opacity-90 cursor-pointer" />
-                        {logoFile && (
-                          <div className="flex items-center gap-3">
-                            <button onClick={handleUploadLogo} disabled={isUploadingLogo} className="px-6 py-2 rounded-lg bg-primary text-primary-foreground font-semibold hover:opacity-90 disabled:opacity-50">
-                              {isUploadingLogo ? 'Enviando...' : 'Salvar Logo'}
-                            </button>
-                            <button onClick={() => { setLogoFile(null); setLogoPreview(null); }} className="text-sm font-medium hover:underline">Cancelar</button>
-                          </div>
-                        )}
+                    ))}
+                  </div>
+
+                  {hasPendingBranding && (
+                    <div className="p-4 rounded-xl bg-primary/5 border border-primary/20 animate-in fade-in slide-in-from-top-2 duration-300">
+                      <div className="flex items-center justify-between gap-4">
+                        <div>
+                          <p className="text-sm font-bold text-primary">Alterações Pendentes</p>
+                          <p className="text-xs text-muted-foreground">Você selecionou novos arquivos. Clique em aplicar para salvar no servidor.</p>
+                        </div>
+                        <Button 
+                          onClick={handleApplyAllBranding}
+                          className="gap-2 shadow-lg shadow-primary/20"
+                        >
+                          <Save size={16} /> Aplicar Identidade Visual
+                        </Button>
                       </div>
                     </div>
-                  </div>
+                  )}
 
                   <div className="pt-6 border-t border-border">
                     <label className="block text-sm font-medium text-muted-foreground mb-3">Cor Principal</label>
                     <div className="flex items-center gap-4">
-                      <input type="color" value={primaryColor} onChange={handleColorChange} className="w-14 h-14 p-1 rounded-xl cursor-pointer border border-border bg-background shadow-sm" />
+                      <input 
+                        type="color" 
+                        value={primaryColor} 
+                        onChange={handleColorChange} 
+                        className="w-14 h-14 p-1 rounded-xl cursor-pointer border border-border bg-background shadow-sm" 
+                      />
                       <div>
                         <p className="text-sm font-medium">Personalizar Destaque</p>
                         <p className="text-xs text-muted-foreground">Esta cor será aplicada em botões, ícones e destaques.</p>

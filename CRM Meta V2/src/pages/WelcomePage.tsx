@@ -1,22 +1,23 @@
-import { useAuth } from "@/modules/auth/hooks/useAuth";
+import { useAuth, useBranding } from "@/modules/auth/hooks/useAuth";
+import { useTheme } from "@/hooks/useTheme";
 import { LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
-interface WelcomePageProps {
-  logoUrl?: string | null;
-}
-
-const WelcomePage = ({ logoUrl }: WelcomePageProps) => {
+const WelcomePage = () => {
   const { user, signOut } = useAuth();
+  const branding = useBranding();
+  const { theme } = useTheme();
+
+  const currentLogo = theme === 'dark' ? branding.logoDark : branding.logoLight;
   const displayName = user?.user_metadata?.full_name || user?.user_metadata?.name || user?.email || "";
 
   return (
     <div className="flex flex-col items-center justify-center min-h-[60vh] p-8 text-center animate-in fade-in zoom-in duration-700">
       <div className="mb-12 relative group">
         <div className="absolute -inset-4 bg-primary/5 rounded-full blur-2xl group-hover:bg-primary/10 transition-all duration-700"></div>
-        {logoUrl ? (
+        {currentLogo ? (
           <img 
-            src={logoUrl} 
+            src={currentLogo} 
             alt="Logo da Empresa" 
             className="max-h-48 w-auto relative object-contain drop-shadow-2xl"
           />
@@ -24,7 +25,7 @@ const WelcomePage = ({ logoUrl }: WelcomePageProps) => {
           <img 
             src="/logo-full.png" 
             alt="Dominus Logo" 
-            className="max-h-32 w-auto relative object-contain brightness-0 dark:brightness-100"
+            className={`max-h-32 w-auto relative object-contain ${theme === 'light' ? 'brightness-100' : 'brightness-0 invert'}`}
           />
         )}
       </div>

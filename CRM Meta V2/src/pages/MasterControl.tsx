@@ -6,7 +6,7 @@ const MasterControl = () => {
     <div className="p-8">
       <Card className="border-green-200 bg-green-50/50">
         <CardHeader>
-          <CardTitle className="text-green-800">✅ Acesso Restabelecido - Painel Master</CardTitle>
+          <CardTitle className="text-green-800">✅ TESTE DE SINCRONIZAÇÃO - DISCO OK</CardTitle>
         </CardHeader>
         <CardContent>
           <p className="text-sm text-green-700">O sistema de diagnóstico confirmou que a rota administrativa está funcionando perfeitamente em seu novo endereço.</p>

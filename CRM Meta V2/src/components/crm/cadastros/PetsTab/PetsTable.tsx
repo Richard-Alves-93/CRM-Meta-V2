@@ -1,5 +1,7 @@
-import { Edit2, Trash2 } from "lucide-react";
+import { Edit2, Trash2, ShoppingCart } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Pet, Customer } from "@/lib/types";
+import { useNavigate } from "react-router-dom";
 
 interface PetsTableProps {
   pets: Pet[];
@@ -7,6 +9,7 @@ interface PetsTableProps {
   loading: boolean;
   onEdit: (pet: Pet) => void;
   onDelete: (id: string) => void;
+  onAttend?: (pet: Pet) => void;
 }
 
 /**
@@ -15,8 +18,18 @@ interface PetsTableProps {
  * No state, no side effects
  */
 
-export function PetsTable({ pets, customers, loading, onEdit, onDelete }: PetsTableProps) {
+export function PetsTable({ pets, customers, loading, onEdit, onDelete, onAttend }: PetsTableProps) {
+  const navigate = useNavigate();
   const getCustomerName = (id: string) => customers.find(c => c.id === id)?.nome || "Desconhecido";
+  
+  const handleAttend = (pet: Pet) => {
+    if (onAttend) {
+      onAttend(pet);
+    } else {
+      navigate(`/pdv?customerId=${pet.customer_id}&petId=${pet.id}`);
+    }
+  };
+
   const activePets = pets.filter(p => p.ativo !== false);
 
   return (
@@ -44,6 +57,15 @@ export function PetsTable({ pets, customers, loading, onEdit, onDelete }: PetsTa
                 <td className="py-3 px-4 text-sm">{getCustomerName(p.customer_id)}</td>
                 <td className="py-3 px-4 text-sm hidden sm:table-cell">{p.especie}{p.raca ? ` - ${p.raca}` : ''}</td>
                 <td className="py-3 px-4 text-sm text-center">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => handleAttend(p)}
+                    className="h-8 w-8 text-primary hover:text-primary hover:bg-primary/10 mr-1"
+                    title="Novo Atendimento"
+                  >
+                    <ShoppingCart size={16} />
+                  </Button>
                   <Button
                     variant="ghost"
                     size="icon"

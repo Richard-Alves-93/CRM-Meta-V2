@@ -10,6 +10,7 @@ const Login = () => {
   const [loading, setLoading] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [companyName, setCompanyName] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [settings, setSettings] = useState<SystemSettings | null>(null);
 
@@ -24,12 +25,19 @@ const Login = () => {
   const urlParams = new URLSearchParams(window.location.search);
   const isInvited = urlParams.has('invite');
   const inviteCode = urlParams.get('invite');
+  const inviteEmail = urlParams.get('email');
 
   if (inviteCode && typeof window !== 'undefined') {
     localStorage.setItem('pending_invite_code', inviteCode);
   }
 
-  const [isRegisterMode, setIsRegisterMode] = useState(isInvited);
+  const [isRegisterMode, setIsRegisterMode] = useState(isInvited || !!inviteEmail);
+
+  useEffect(() => {
+    if (inviteEmail) {
+      setEmail(inviteEmail);
+    }
+  }, [inviteEmail]);
 
   const handleEmailAuth = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -41,6 +49,10 @@ const Login = () => {
           password,
           options: {
             emailRedirectTo: inviteCode ? `${window.location.origin}/login?invite=${inviteCode}` : window.location.origin,
+            data: {
+              company_name: companyName || "Minha Empresa",
+              full_name: email.split('@')[0]
+            }
           }
         });
 
@@ -169,6 +181,20 @@ const Login = () => {
             )}
 
             <form onSubmit={handleEmailAuth} className="space-y-4">
+              {isRegisterMode && !isInvited && (
+                <div className="space-y-1.5 animate-in fade-in slide-in-from-top-2 duration-300">
+                  <label className="text-[10px] font-semibold text-muted-foreground/80 ml-0.5">Nome da Empresa</label>
+                  <input 
+                    type="text" 
+                    required={isRegisterMode && !isInvited}
+                    value={companyName}
+                    onChange={e => setCompanyName(e.target.value)}
+                    className="w-full h-9 rounded-md border border-slate-200 dark:border-slate-800 bg-slate-50/30 dark:bg-slate-900/50 px-3 text-xs transition-all focus:bg-white focus:ring-2 focus:ring-primary/10 focus:border-primary outline-none"
+                    placeholder="Ex: Pet Shop Pro"
+                  />
+                </div>
+              )}
+
               <div className="space-y-1.5">
                 <label className="text-[10px] font-semibold text-muted-foreground/80 ml-0.5">E-mail</label>
                 <input 

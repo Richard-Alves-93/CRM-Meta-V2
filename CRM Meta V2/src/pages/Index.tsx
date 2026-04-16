@@ -20,7 +20,9 @@ import { toast } from "sonner";
 import { LogOut, Menu } from "lucide-react";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { supabase } from "@/integrations/supabase/client";
+import { cn } from "@/lib/utils";
 import { UserNav } from "@/components/crm/UserNav";
+import { BrandingManager } from "@/components/crm/BrandingManager";
 
 // Lazy-loaded pages for code splitting
 const LancamentosPage = lazy(() => import("@/components/crm/LancamentosPage"));
@@ -31,7 +33,8 @@ const RelatoriosPage = lazy(() => import("@/components/crm/RelatoriosPage"));
 const ConfiguracoesPage = lazy(() => import("@/components/crm/ConfiguracoesPage"));
 const AgendamentosPage = lazy(() => import("@/pages/AgendamentosPage"));
 const EquipePage = lazy(() => import("@/pages/EquipePage"));
-import MasterAdminDashboard from "@/modules/master/pages/MasterAdminPage";
+const PdvPage = lazy(() => import("@/pages/PdvPage"));
+import MasterAdminPage from "@/modules/master/pages/MasterAdminPage";
 import WelcomePage from "@/pages/WelcomePage";
 import DriverDashboard from "./DriverDashboard";
 
@@ -46,7 +49,7 @@ const Index = () => {
     const validPages: (CrmPage | 'admin')[] = [
         "dashboard", "lancamentos", "metas", "cadastros", 
         "recompras", "agendamentos", "relatorios", "configuracoes", 
-        "admin", "equipe"
+        "admin", "equipe", "pdv"
     ];
     return validPages.includes(path as any) ? (path as any) : "dashboard";
   };
@@ -56,17 +59,7 @@ const Index = () => {
   const [db, setDb] = useState<CrmDatabase>({ metas: [], lancamentos: [] });
   const [loading, setLoading] = useState(true);
   const [tenantStatus, setTenantStatus] = useState<string | null>(null);
-  const [customLogo, setCustomLogo] = useState<string | null>(() => {
-    return localStorage.getItem('crm_custom_logo');
-  });
 
-  useEffect(() => {
-    const userLogo = user?.user_metadata?.logo_url;
-    if (userLogo && userLogo !== customLogo) {
-      setCustomLogo(userLogo);
-      localStorage.setItem('crm_custom_logo', userLogo);
-    }
-  }, [user, customLogo]);
 
   const [metaModalOpen, setMetaModalOpen] = useState(false);
   const [editingMeta, setEditingMeta] = useState<Meta | null>(null);
@@ -245,11 +238,12 @@ const Index = () => {
     if (hasPermission(permission)) {
       return component;
     }
-    return <WelcomePage logoUrl={customLogo} />;
+    return <WelcomePage />;
   };
 
   return (
     <div className="flex min-h-screen bg-background text-foreground selection:bg-primary/20">
+      <BrandingManager />
       <CrmSidebar 
         currentPage={page === 'admin' ? 'dashboard' : page as any} 
         isOpen={isSidebarOpen}
@@ -262,7 +256,6 @@ const Index = () => {
           setIsSidebarOpen(false); 
         }} 
         onClose={() => setIsSidebarOpen(false)}
-        logoUrl={customLogo}
       />
 
       <main className="flex-1 flex flex-col min-w-0 transition-all duration-300 md:ml-[250px]">
@@ -276,7 +269,7 @@ const Index = () => {
             </button>
             <div className="hidden md:block">
               <h2 className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/60">Sessão Ativa</h2>
-              <p className="text-base font-bold text-foreground leading-tight">Olá, {displayName.split(' ')[0]}</p>
+              <p className="text-base font-bold text-foreground leading-tight">Olá, {displayName.split(' ')[0]} ✨</p>
             </div>
           </div>
           
@@ -291,10 +284,13 @@ const Index = () => {
           </div>
         </header>
 
-        <div className="flex-1 p-4 md:p-8 overflow-x-hidden relative">
+        <div className={cn(
+          "flex-1 overflow-x-hidden relative transition-all duration-300",
+          page === "pdv" ? "p-2 md:p-3" : "p-4 md:p-8"
+        )}>
           {page === "admin" && (
             <PageSuspense>
-              <MasterAdminDashboard />
+              <MasterAdminPage />
             </PageSuspense>
           )}
           {page === "dashboard" && (
@@ -356,10 +352,17 @@ const Index = () => {
               ))}
             </PageSuspense>
           )}
+          {page === "pdv" && (
+            <PageSuspense>
+               {renderWithPermission("pdv.open", (
+                <PdvPage />
+              ))}
+            </PageSuspense>
+          )}
           {page === "configuracoes" && (
             <PageSuspense>
               {renderWithPermission("view_settings", (
-                <ConfiguracoesPage db={db} onRefresh={refresh} customLogo={customLogo} onLogoChange={setCustomLogo} />
+                <ConfiguracoesPage db={db} onRefresh={refresh} />
               ))}
             </PageSuspense>
           )}

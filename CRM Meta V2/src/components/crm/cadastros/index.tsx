@@ -1,10 +1,11 @@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Users, PawPrint, PackageSearch } from "lucide-react";
+import { Users, PawPrint, PackageSearch, Briefcase } from "lucide-react";
 import WizardCadastroModal from "../wizard";
 import { useCadastrosData } from "./hooks/useCadastrosData";
 import { ClientesTab } from "./ClientesTab";
 import { PetsTab } from "./PetsTab";
 import { ProdutosTab } from "./ProdutosTab";
+import { ServicosTab } from "./ServicosTab";
 import { useState } from "react";
 
 /**
@@ -29,6 +30,9 @@ const CadastrosPage = () => {
     handleDeletePet,
     handleSaveProduto,
     handleDeleteProduto,
+    services,
+    handleSaveService,
+    handleDeleteService,
     handleSaveCadastroCompleto
   } = useCadastrosData();
 
@@ -38,24 +42,40 @@ const CadastrosPage = () => {
 
   return (
     <div className="flex flex-col gap-6">
-      <div>
-        <h1 className="text-3xl font-bold text-foreground mb-1">Cadastros</h1>
+      <div className="flex flex-col gap-1 mb-6">
+        <h1 className="text-3xl font-bold tracking-tight text-foreground">Cadastros</h1>
         <p className="text-muted-foreground text-sm">Gerencie tutores, pets e produtos recorrentes</p>
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-        <TabsList className="grid w-full grid-cols-3 max-w-2xl bg-secondary/50 p-1">
-          <TabsTrigger value="clientes" className="data-[state=active]:bg-background data-[state=active]:text-primary data-[state=active]:shadow-sm flex gap-2">
+        <TabsList className="bg-card border border-border p-1 h-auto self-start sm:self-auto flex flex-wrap sm:flex-nowrap gap-1">
+          <TabsTrigger 
+            value="clientes" 
+            className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground flex items-center gap-2 py-2 px-4 transition-all rounded-lg"
+          >
             <Users size={16} />
-            <span className="hidden sm:inline">Tutores</span>
+            <span>Tutores</span>
           </TabsTrigger>
-          <TabsTrigger value="pets" className="data-[state=active]:bg-background data-[state=active]:text-primary data-[state=active]:shadow-sm flex gap-2">
+          <TabsTrigger 
+            value="pets" 
+            className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground flex items-center gap-2 py-2 px-4 transition-all rounded-lg"
+          >
             <PawPrint size={16} />
-            <span className="hidden sm:inline">Pets</span>
+            <span>Pets</span>
           </TabsTrigger>
-          <TabsTrigger value="produtos" className="data-[state=active]:bg-background data-[state=active]:text-primary data-[state=active]:shadow-sm flex gap-2">
+          <TabsTrigger 
+            value="produtos" 
+            className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground flex items-center gap-2 py-2 px-4 transition-all rounded-lg"
+          >
             <PackageSearch size={16} />
-            <span className="hidden sm:inline">Produtos</span>
+            <span>Produtos</span>
+          </TabsTrigger>
+          <TabsTrigger 
+            value="servicos" 
+            className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground flex items-center gap-2 py-2 px-4 transition-all rounded-lg"
+          >
+            <Briefcase size={16} />
+            <span>Serviços</span>
           </TabsTrigger>
         </TabsList>
 
@@ -64,10 +84,13 @@ const CadastrosPage = () => {
           <TabsContent value="clientes" className="m-0 focus-visible:outline-none focus-visible:ring-0">
             <ClientesTab
               customers={customers}
+              pets={pets}
+              products={products}
               loading={loading}
               onWizardOpen={() => setWizardModalOpen(true)}
               onSaveCliente={handleSaveCliente}
               onDeleteCliente={handleDeleteCliente}
+              onSavePet={handleSavePet}
             />
           </TabsContent>
 
@@ -90,6 +113,16 @@ const CadastrosPage = () => {
               loading={loading}
               onSaveProduto={handleSaveProduto}
               onDeleteProduto={handleDeleteProduto}
+            />
+          </TabsContent>
+
+          {/* TAB: SERVIÇOS */}
+          <TabsContent value="servicos" className="m-0 focus-visible:outline-none focus-visible:ring-0">
+            <ServicosTab
+              services={services}
+              loading={loading}
+              onSaveService={handleSaveService}
+              onDeleteService={handleDeleteService}
             />
           </TabsContent>
         </div>

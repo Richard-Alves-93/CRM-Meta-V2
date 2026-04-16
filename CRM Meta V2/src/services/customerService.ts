@@ -7,7 +7,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { withErrorHandler, handleSupabaseError, CrmError } from "@/services/errorHandler";
 import { getAuthUser } from "@/services/authService";
 import { z } from "zod";
-import type { Customer } from "@/lib/types";
+import type { Customer, Pet } from "@/lib/types";
 
 // Input validation schemas
 const customerSchema = z.object({
@@ -46,12 +46,18 @@ export async function fetchCustomers(): Promise<Customer[]> {
   return data as Customer[];
 }
 
-export async function fetchCustomersWithPets(): Promise<(Customer & { pets: Pet[] })[]> {
-  const { data, error } = await supabase
+export async function fetchCustomersWithPets(tenantId?: string): Promise<(Customer & { pets: Pet[] })[]> {
+  let query = supabase
     .from('customers')
     .select('*, pets(*)')
-    .eq('ativo', true)
-    .order('nome');
+    .eq('ativo', true);
+    
+  if (tenantId) {
+    // Busca clientes do tenant OU clientes sem tenant (legados)
+    query = query.or(`tenant_id.eq.${tenantId},tenant_id.is.null`);
+  }
+
+  const { data, error } = await query.order('nome');
     
   if (error) throw error;
   return data as (Customer & { pets: Pet[] })[];
@@ -59,13 +65,22 @@ export async function fetchCustomersWithPets(): Promise<(Customer & { pets: Pet[
 
 export async function addCustomer(customer: Omit<Customer, 'id'>): Promise<Customer> {
   const user = await getAuthUser();
+  
+  // Buscar o perfil para obter o tenant_id
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('tenant_id')
+    .eq('user_id', user.id)
+    .single();
+
   const validated = validateCustomerInput(customer);
   
   const { data, error } = await supabase
     .from('customers')
     .insert({ 
       ...validated, 
-      user_id: user.id 
+      user_id: user.id,
+      tenant_id: profile?.tenant_id || customer.tenant_id
     })
     .select()
     .single();

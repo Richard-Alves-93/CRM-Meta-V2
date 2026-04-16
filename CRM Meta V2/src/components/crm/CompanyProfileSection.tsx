@@ -6,33 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Save, Building } from "lucide-react";
-
-export const formatPhone = (value: string) => {
-  const numbers = value.replace(/\D/g, "");
-  if (numbers.length === 0) return "";
-  if (numbers.length <= 2) return `(${numbers}`;
-  if (numbers.length <= 6) return `(${numbers.slice(0, 2)}) ${numbers.slice(2)}`;
-  if (numbers.length <= 10) return `(${numbers.slice(0, 2)}) ${numbers.slice(2, 6)}-${numbers.slice(6)}`;
-  return `(${numbers.slice(0, 2)}) ${numbers.slice(2, 7)}-${numbers.slice(7, 11)}`;
-};
-
-export const formatDocument = (value: string) => {
-  const numbers = value.replace(/\D/g, "");
-  if (numbers.length <= 11) {
-    let v = numbers;
-    if (v.length > 9) v = v.replace(/(\d{3})(\d{3})(\d{3})(\d{1,2})/, "$1.$2.$3-$4");
-    else if (v.length > 6) v = v.replace(/(\d{3})(\d{3})(\d{1,3})/, "$1.$2.$3");
-    else if (v.length > 3) v = v.replace(/(\d{3})(\d{1,3})/, "$1.$2");
-    return v;
-  } else {
-    let v = numbers.substring(0, 14);
-    if (v.length > 12) v = v.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{1,2})/, "$1.$2.$3/$4-$5");
-    else if (v.length > 8) v = v.replace(/(\d{2})(\d{3})(\d{3})(\d{1,4})/, "$1.$2.$3/$4");
-    else if (v.length > 5) v = v.replace(/(\d{2})(\d{3})(\d{1,3})/, "$1.$2.$3");
-    else if (v.length > 2) v = v.replace(/(\d{2})(\d{1,3})/, "$1.$2");
-    return v;
-  }
-};
+import { formatPhone, formatDocument, formatCEP } from "@/lib/formatters";
 
 export const CompanyProfileSection = () => {
   const { tenantId, user } = useAuth();
@@ -198,13 +172,8 @@ export const CompanyProfileSection = () => {
   };
 
   const handleCepChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    let rawValue = e.target.value.replace(/\D/g, '');
-    if (rawValue.length > 8) rawValue = rawValue.slice(0, 8);
-    
-    let formatted = rawValue;
-    if (rawValue.length > 5) {
-      formatted = rawValue.substring(0, 5) + '-' + rawValue.substring(5, 8);
-    }
+    const formatted = formatCEP(e.target.value);
+    const rawValue = formatted.replace(/\D/g, '');
     
     setFormData(prev => ({ ...prev, cep: formatted }));
 

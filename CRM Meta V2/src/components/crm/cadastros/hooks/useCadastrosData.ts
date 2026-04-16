@@ -1,12 +1,14 @@
 import { useState, useCallback, useEffect } from "react";
 import { Customer, Pet, Product } from "@/lib/crm-data";
 import {
-  fetchCustomers, addCustomer, updateCustomer, deleteCustomer,
+  fetchCustomers, fetchCustomersWithPets, addCustomer, updateCustomer, deleteCustomer,
   fetchPets, addPet, updatePet, deletePet,
   fetchProducts, addProduct, updateProduct, deleteProduct,
-  findOrCreateProduct, startNewPurchaseCycle, addLancamento
+  findOrCreateProduct, startNewPurchaseCycle, addLancamento,
+  serviceService, Service
 } from "@/lib/crm-data";
 import { toast } from "sonner";
+import { useAuth } from "@/modules/auth/hooks/useAuth";
 
 /**
  * ETAPA 5a: Custom Hook for Cadastros Data Management
@@ -19,6 +21,7 @@ interface UseCadastrosDataReturn {
   customers: Customer[];
   pets: Pet[];
   products: Product[];
+  services: Service[];
   loading: boolean;
 
   // Handlers
@@ -29,6 +32,8 @@ interface UseCadastrosDataReturn {
   handleDeletePet: (id: string) => Promise<void>;
   handleSaveProduto: (product: Omit<Product, 'id'>, id?: string) => Promise<void>;
   handleDeleteProduto: (id: string) => Promise<void>;
+  handleSaveService: (service: Omit<Service, 'id' | 'created_at'>, id?: string) => Promise<void>;
+  handleDeleteService: (id: string) => Promise<void>;
   handleSaveCadastroCompleto: (
     tutor: Omit<Customer, 'id'>,
     petsList: Omit<Pet, 'id' | 'customer_id'>[],
@@ -39,22 +44,27 @@ interface UseCadastrosDataReturn {
   setEditingCliente: (customer: Customer | null) => void;
   setEditingPet: (pet: Pet | null) => void;
   setEditingProduto: (product: Product | null) => void;
+  setEditingService: (service: Service | null) => void;
   editingCliente: Customer | null;
   editingPet: Pet | null;
   editingProduto: Product | null;
+  editingService: Service | null;
 }
 
 export function useCadastrosData(): UseCadastrosDataReturn {
+  const { tenantId } = useAuth();
   // Data state
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [pets, setPets] = useState<Pet[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
+  const [services, setServices] = useState<Service[]>([]);
   const [loading, setLoading] = useState(true);
 
   // Edit state
   const [editingCliente, setEditingCliente] = useState<Customer | null>(null);
   const [editingPet, setEditingPet] = useState<Pet | null>(null);
   const [editingProduto, setEditingProduto] = useState<Product | null>(null);
+  const [editingService, setEditingService] = useState<Service | null>(null);
 
   // Helper: Converter strings vazias em null para campos de data
   const sanitizePetData = (pet: Omit<Pet, 'id'>) => ({
@@ -67,14 +77,16 @@ export function useCadastrosData(): UseCadastrosDataReturn {
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const [c, p, prod] = await Promise.all([
-        fetchCustomers(),
+      const [c, p, prod, s] = await Promise.all([
+        fetchCustomersWithPets(tenantId || undefined),
         fetchPets(),
-        fetchProducts()
+        fetchProducts(),
+        serviceService.fetchServices(tenantId || undefined)
       ]);
       setCustomers(c);
       setPets(p);
       setProducts(prod);
+      setServices(s);
     } catch (error: any) {
       console.error("[CRM] Error loading cadastros:", error);
       toast.error(`Erro ao carregar dados: ${error?.message || "Erro desconhecido"}`);
@@ -224,6 +236,36 @@ export function useCadastrosData(): UseCadastrosDataReturn {
     }
   }, []);
 
+  // ---- Handlers: Serviços ----
+  const handleSaveService = useCallback(async (service: Omit<Service, 'id' | 'created_at'>, id?: string) => {
+    try {
+      if (id) {
+        await serviceService.updateService(id, service);
+        toast.success("Serviço atualizado!");
+      } else {
+        await serviceService.addService(service);
+        toast.success("Serviço criado!");
+      }
+      setEditingService(null);
+      await loadData();
+    } catch (error) {
+      console.error(error);
+      toast.error("Erro ao salvar serviço.");
+    }
+  }, [loadData]);
+
+  const handleDeleteService = useCallback(async (id: string) => {
+    if (!window.confirm("Tem certeza que deseja remover este serviço?")) return;
+    try {
+      await serviceService.deleteService(id);
+      setServices(prev => prev.map(s => s.id === id ? { ...s, ativo: false } : s));
+      toast.success("Serviço removido!");
+    } catch (error) {
+      console.error(error);
+      toast.error("Erro ao remover serviço.");
+    }
+  }, []);
+
   // ---- Handler: Cadastro Completo ----
   const handleSaveCadastroCompleto = useCallback(async (
     tutor: Omit<Customer, 'id'>,
@@ -360,6 +402,7 @@ export function useCadastrosData(): UseCadastrosDataReturn {
     customers,
     pets,
     products,
+    services,
     loading,
 
     // Handlers
@@ -370,14 +413,18 @@ export function useCadastrosData(): UseCadastrosDataReturn {
     handleDeletePet,
     handleSaveProduto,
     handleDeleteProduto,
+    handleSaveService,
+    handleDeleteService,
     handleSaveCadastroCompleto,
 
     // Edit state
     setEditingCliente,
     setEditingPet,
     setEditingProduto,
+    setEditingService,
     editingCliente,
     editingPet,
-    editingProduto
+    editingProduto,
+    editingService
   };
 }

@@ -10,9 +10,10 @@ interface PetModalProps {
   editingPet?: Pet | null;
   customers: Customer[];
   products: Product[];
+  initialCustomerId?: string;
 }
 
-const PetModal = ({ open, onClose, onSave, editingPet, customers, products }: PetModalProps) => {
+const PetModal = ({ open, onClose, onSave, editingPet, customers, products, initialCustomerId }: PetModalProps) => {
   const [nome, setNome] = useState("");
   const [especie, setEspecie] = useState("Cachorro");
   const [raca, setRaca] = useState("");
@@ -66,7 +67,7 @@ const PetModal = ({ open, onClose, onSave, editingPet, customers, products }: Pe
       setSexo("Macho");
       setPorte("Médio");
       setPeso("");
-      setCustomerId("");
+      setCustomerId(initialCustomerId || "");
       setPurchases([]); // Reset compras para novo pet
     }
   }, [editingPet, open]);

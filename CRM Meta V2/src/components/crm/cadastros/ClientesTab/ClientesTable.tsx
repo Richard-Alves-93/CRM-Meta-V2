@@ -1,11 +1,13 @@
-import { Edit2, Trash2 } from "lucide-react";
+import { Edit2, Trash2, ShoppingCart } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Customer } from "@/lib/types";
 
 interface ClientesTableProps {
   customers: Customer[];
   loading: boolean;
   onEdit: (customer: Customer) => void;
   onDelete: (id: string) => void;
+  onAttend: (customer: Customer) => void;
 }
 
 /**
@@ -14,7 +16,7 @@ interface ClientesTableProps {
  * No state, no side effects - completely reusable
  */
 
-export function ClientesTable({ customers, loading, onEdit, onDelete }: ClientesTableProps) {
+export function ClientesTable({ customers, loading, onEdit, onDelete, onAttend }: ClientesTableProps) {
   const activeCustomers = customers.filter(c => c.ativo !== false);
 
   return (
@@ -42,6 +44,15 @@ export function ClientesTable({ customers, loading, onEdit, onDelete }: Clientes
                 <td className="py-3 px-4 text-sm">{c.whatsapp || c.telefone || '-'}</td>
                 <td className="py-3 px-4 text-sm hidden md:table-cell">{c.email || '-'}</td>
                 <td className="py-3 px-4 text-sm text-center">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => onAttend(c)}
+                    className="h-8 w-8 text-primary hover:text-primary hover:bg-primary/10 mr-1"
+                    title="Atendimento / Ver Pets"
+                  >
+                    <ShoppingCart size={16} />
+                  </Button>
                   <Button
                     variant="ghost"
                     size="icon"

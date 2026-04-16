@@ -38,14 +38,14 @@ const ManageSectorModal = ({ sector, open, onClose, onSuccess, tenantId }: Manag
   });
 
   const permissionLabels: Record<string, string> = {
-    view_dashboard: "Acesso ao Dashboard Principal",
-    view_sales: "Ver e Lançar Vendas",
-    view_goals: "Gerenciar Metas",
-    view_customers: "Acesso a Clientes e Pets",
-    view_logistics: "Gestão de Transportes",
-    view_reports: "Ver Relatórios e Estatísticas",
-    view_settings: "Configurações da Empresa",
-    manage_team: "Gerenciar Equipe e Setores",
+    view_dashboard: "Dashboard",
+    view_sales: "Vendas",
+    view_goals: "Metas",
+    view_customers: "Clientes",
+    view_logistics: "Logística",
+    view_reports: "Relatórios",
+    view_settings: "Ajustes",
+    manage_team: "Equipe",
   };
 
   useEffect(() => {
@@ -100,7 +100,7 @@ const ManageSectorModal = ({ sector, open, onClose, onSuccess, tenantId }: Manag
 
   const handleDelete = async () => {
     if (!sector) return;
-    if (!confirm("Tem certeza que deseja excluir este setor? Isso não afetará os usuários já cadastrados, mas eles ficarão sem setor vinculado.")) return;
+    if (!confirm("Tem certeza que deseja excluir este setor?")) return;
 
     setLoading(true);
     try {
@@ -121,45 +121,47 @@ const ManageSectorModal = ({ sector, open, onClose, onSuccess, tenantId }: Manag
 
   return (
     <Dialog open={open} onOpenChange={(val) => !val && onClose()}>
-      <DialogContent className="sm:max-w-[500px]">
+      <DialogContent className="sm:max-w-[480px] rounded-xl border-border">
         <DialogHeader>
-          <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center mb-4">
-            <Layers className="w-6 h-6 text-primary" />
+          <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center mb-2">
+            <Layers className="w-5 h-5 text-primary" />
           </div>
-          <DialogTitle className="text-xl font-bold">{sector ? 'Editar Setor' : 'Novo Setor'}</DialogTitle>
-          <DialogDescription>
-            Defina o nome do departamento e quais permissões padrão seus membros terão.
+          <DialogTitle className="text-xl font-bold tracking-tight">{sector ? 'Editar Setor' : 'Novo Setor'}</DialogTitle>
+          <DialogDescription className="text-sm">
+            Defina o nome do departamento e as permissões de acesso.
           </DialogDescription>
         </DialogHeader>
 
         <div className="grid gap-6 py-4">
           <div className="grid gap-2">
-            <Label htmlFor="name">Nome do Setor</Label>
+            <Label htmlFor="name" className="mathrm whitespace-nowrap text-xs font-bold uppercase tracking-wider text-muted-foreground">Nome do Setor</Label>
             <Input 
               id="name" 
               placeholder="Ex: Logística, Vendas, Veterinária..." 
               value={name} 
               onChange={e => setName(e.target.value)}
-              className="rounded-xl h-11"
+              className="rounded-lg h-10 border-border bg-background"
             />
           </div>
 
-          <div className="bg-secondary/20 p-4 rounded-xl space-y-3">
-             <div className="flex items-center gap-2 mb-2">
+          <div className="bg-secondary/20 p-4 rounded-lg border border-border/50">
+             <div className="flex items-center gap-2 mb-4">
                 <ShieldCheck className="w-4 h-4 text-primary" />
-                <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Permissões Padrão do Setor</p>
+                <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest leading-none">Matriz de Acessos</p>
              </div>
-             <div className="grid grid-cols-1 gap-3">
+             
+             <div className="grid grid-cols-2 gap-x-6 gap-y-3">
                 {Object.keys(permissionLabels).map(key => (
-                  <div key={key} className="flex items-center space-x-3 bg-background/50 p-2 rounded-lg border border-border/50">
+                  <div key={key} className="flex items-center space-x-2">
                     <Checkbox 
                       id={`ps-${key}`} 
                       checked={permissions[key]} 
                       onCheckedChange={(checked) => setPermissions(p => ({...p, [key]: !!checked}))}
+                      className="rounded border-border"
                     />
                     <label 
                       htmlFor={`ps-${key}`}
-                      className="text-sm font-medium leading-none cursor-pointer flex-1"
+                      className="text-xs font-medium leading-none cursor-pointer"
                     >
                       {permissionLabels[key]}
                     </label>
@@ -171,15 +173,15 @@ const ManageSectorModal = ({ sector, open, onClose, onSuccess, tenantId }: Manag
 
         <DialogFooter className="gap-2">
           {sector && (
-            <Button variant="ghost" onClick={handleDelete} className="text-red-500 hover:text-red-600 hover:bg-red-50" disabled={loading}>
+            <Button variant="ghost" onClick={handleDelete} className="text-red-500 hover:text-red-600 hover:bg-red-50 rounded-lg" disabled={loading}>
               <Trash2 className="w-4 h-4 mr-2" /> Excluir
             </Button>
           )}
           <div className="flex gap-2 flex-1 justify-end">
-            <Button variant="outline" onClick={onClose} disabled={loading} className="rounded-xl">Cancelar</Button>
-            <Button onClick={handleSave} disabled={loading} className="rounded-xl gap-2 font-bold px-6">
-              <Save className="w-4 h-4" />
-              {sector ? 'Salvar Alterações' : 'Criar Setor'}
+            <Button variant="outline" onClick={onClose} disabled={loading} className="rounded-lg font-bold">Cancelar</Button>
+            <Button onClick={handleSave} disabled={loading} className="rounded-lg font-bold px-6">
+              <Save className="w-4 h-4 mr-2" />
+              {sector ? 'Salvar' : 'Criar Setor'}
             </Button>
           </div>
         </DialogFooter>

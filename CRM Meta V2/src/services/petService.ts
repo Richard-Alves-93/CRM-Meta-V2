@@ -28,12 +28,20 @@ export async function fetchPetsByCustomer(customerId: string): Promise<Pet[]> {
 export async function addPet(pet: Omit<Pet, 'id'>): Promise<Pet> {
   const user = await getAuthUser();
 
+  // Buscar o perfil para obter o tenant_id
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('tenant_id')
+    .eq('user_id', user.id)
+    .single();
+
   // Sanitize date fields: convert empty strings to null
   const sanitizedPet = {
     ...pet,
     data_aniversario: pet.data_aniversario?.trim() ? pet.data_aniversario : null,
     ativo: true,
-    user_id: user.id
+    user_id: user.id,
+    tenant_id: profile?.tenant_id || (pet as any).tenant_id
   };
 
   const { data, error } = await supabase.from('pets').insert(sanitizedPet as any).select().single();

@@ -36,6 +36,7 @@ export type {
   WorkMode,
   CustomHoliday,
   CrmDatabase,
+  Service,
 } from '@/lib/types';
 
 // ==================== Formatter Exports ====================
@@ -47,6 +48,7 @@ export { getAuthUser, getAuthUserId } from '@/services/authService';
 // ==================== Customer Service Exports ====================
 export {
   fetchCustomers,
+  fetchCustomersWithPets,
   addCustomer,
   updateCustomer,
   deleteCustomer,
@@ -113,6 +115,11 @@ export {
   getDiasMes,
   calcularVendasNecessarias,
 } from '@/services/saleService';
+
+// ==================== Service Management Exports ====================
+export {
+  serviceService,
+} from '@/services/serviceService';
 
 // ==================== Export Service Exports ====================
 export {

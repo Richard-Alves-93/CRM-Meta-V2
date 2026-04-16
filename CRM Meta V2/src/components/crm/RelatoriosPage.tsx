@@ -2,8 +2,10 @@ import { useState, useMemo } from "react";
 import { CrmDatabase, formatCurrency, formatDate, getDiasMes } from "@/lib/crm-data";
 import { parseLocalDate } from "@/utils/date";
 import KpiCard from "./KpiCard";
-import { DollarSign, TrendingDown, Activity, TrendingUp, Calendar, Target } from "lucide-react";
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ComposedChart, Line, Legend, Area, AreaChart } from "recharts";
+import { DollarSign, TrendingDown, Activity, TrendingUp, Calendar, Target, FileDown } from "lucide-react";
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ComposedChart, Line, Legend, Area, AreaChart, LineChart } from "recharts";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Button } from "@/components/ui/button";
 
 interface RelatoriosPageProps {
   db: CrmDatabase;
@@ -74,6 +76,29 @@ const RelatoriosPage = ({ db, onExportExcel }: RelatoriosPageProps) => {
     [lancamentos]
   );
 
+  const metaVsRealizado = useMemo(() => {
+    if (viewMode !== 'month') return [];
+    const metaPrincipal = db.metas[0];
+    if (!metaPrincipal) return [];
+    
+    const [y, m] = filterMonth.split("-");
+    const diasMes = new Date(parseInt(y), parseInt(m), 0).getDate();
+    const metaDiaria = metaPrincipal.valor / diasMes;
+    
+    const hoje = new Date();
+    const isCurrentMonth = hoje.getFullYear() === parseInt(y) && hoje.getMonth() + 1 === parseInt(m);
+    const limitDia = isCurrentMonth ? hoje.getDate() : diasMes;
+
+    let acum = 0;
+    return Array.from({ length: limitDia }, (_, i) => {
+      const dia = i + 1;
+      acum += lancamentos
+        .filter(l => parseLocalDate(l.data).getDate() === dia)
+        .reduce((s, l) => s + l.valorLiquido, 0);
+      return { dia, meta: metaDiaria * dia, realizado: acum };
+    });
+  }, [db.metas, lancamentos, viewMode, filterMonth]);
+
   const topMesesAnual = useMemo(() => {
     if (viewMode !== 'year') return [];
     return [...vendasPorMes]
@@ -83,49 +108,46 @@ const RelatoriosPage = ({ db, onExportExcel }: RelatoriosPageProps) => {
   }, [vendasPorMes, viewMode]);
 
   return (
-    <div>
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-foreground mb-1">Relatórios de Desempenho</h1>
+    <div className="space-y-6">
+      <div className="flex flex-col gap-1 mb-6">
+        <h1 className="text-3xl font-bold tracking-tight text-foreground">Relatórios de Desempenho</h1>
         <p className="text-muted-foreground text-sm">Visão analítica das suas vendas e progresso de metas.</p>
-        
-        <div className="mt-6 flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between bg-card border border-border p-4 rounded-xl shadow-sm">
-          <div className="flex bg-secondary p-1 rounded-lg">
-            <button 
-              onClick={() => setViewMode('month')}
-              className={`px-4 py-2 text-sm font-medium rounded-md transition-colors ${viewMode === 'month' ? 'bg-background text-primary shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
-            >
-              Visão Mensal
-            </button>
-            <button 
-              onClick={() => setViewMode('year')}
-              className={`px-4 py-2 text-sm font-medium rounded-md transition-colors ${viewMode === 'year' ? 'bg-background text-primary shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
-            >
-              Visão Anual
-            </button>
-          </div>
+      </div>
 
-          <div className="flex gap-3">
-            {viewMode === 'month' ? (
-              <div className="flex items-center gap-2">
-                <Calendar size={18} className="text-muted-foreground" />
-                <input type="month" value={filterMonth} onChange={(e) => setFilterMonth(e.target.value)}
-                  className="px-3 py-2 border border-input rounded-lg text-sm bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring" />
-              </div>
-            ) : (
-              <div className="flex items-center gap-2">
-                <Calendar size={18} className="text-muted-foreground" />
-                <select value={filterYear} onChange={(e) => setFilterYear(e.target.value)}
-                  className="px-3 py-2 border border-input rounded-lg text-sm bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring">
-                  {Array.from({length: 5}, (_, i) => new Date().getFullYear() - 2 + i).map(year => (
-                    <option key={year} value={year}>{year}</option>
-                  ))}
-                </select>
-              </div>
-            )}
-            <button onClick={onExportExcel} className="px-3 py-2 rounded-lg bg-primary/10 text-primary text-sm font-medium hover:bg-primary/20 transition-colors">
-              📥 Exportar Excel
-            </button>
-          </div>
+      <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between bg-card border border-border p-4 rounded-xl shadow-sm">
+        <Tabs value={viewMode} onValueChange={(v) => setViewMode(v as ViewMode)} className="w-auto">
+          <TabsList className="bg-secondary/20 p-1 rounded-lg">
+            <TabsTrigger value="month" className="rounded-md px-4 py-1.5 data-[state=active]:bg-background data-[state=active]:text-primary data-[state=active]:shadow-sm text-sm font-medium">
+              Visão Mensal
+            </TabsTrigger>
+            <TabsTrigger value="year" className="rounded-md px-4 py-1.5 data-[state=active]:bg-background data-[state=active]:text-primary data-[state=active]:shadow-sm text-sm font-medium">
+              Visão Anual
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
+
+        <div className="flex gap-3 items-center">
+          {viewMode === 'month' ? (
+            <div className="flex items-center gap-2">
+              <Calendar size={18} className="text-muted-foreground" />
+              <input type="month" value={filterMonth} onChange={(e) => setFilterMonth(e.target.value)}
+                className="px-3 py-2 border border-input rounded-lg text-sm bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring h-10" />
+            </div>
+          ) : (
+            <div className="flex items-center gap-2">
+              <Calendar size={18} className="text-muted-foreground" />
+              <select value={filterYear} onChange={(e) => setFilterYear(e.target.value)}
+                className="px-3 py-2 border border-input rounded-lg text-sm bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring h-10">
+                {Array.from({length: 5}, (_, i) => new Date().getFullYear() - 2 + i).map(year => (
+                  <option key={year} value={year}>{year}</option>
+                ))}
+              </select>
+            </div>
+          )}
+          <Button variant="outline" onClick={onExportExcel} className="rounded-lg gap-2 h-10 px-4 font-bold border-border">
+            <FileDown size={18} />
+            Exportar Excel
+          </Button>
         </div>
       </div>
 
@@ -177,39 +199,58 @@ const RelatoriosPage = ({ db, onExportExcel }: RelatoriosPageProps) => {
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2 bg-card border border-border rounded-xl p-6 shadow-sm">
-          <h3 className="font-semibold text-card-foreground mb-4">
-            {viewMode === 'month' ? 'Evolução Diária de Vendas' : 'Evolução Mensal vs Meta Principal'}
-          </h3>
-          <div className="h-[350px]">
-            <ResponsiveContainer width="100%" height="100%">
-              {viewMode === 'month' ? (
-                <AreaChart data={vendasPorDia}>
-                  <defs>
-                    <linearGradient id="colorValor" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="hsl(var(--primary))" stopOpacity={0.3}/>
-                      <stop offset="95%" stopColor="hsl(var(--primary))" stopOpacity={0}/>
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
-                  <XAxis dataKey="dia" tick={{ fontSize: 12 }} stroke="hsl(var(--muted-foreground))" />
-                  <YAxis tick={{ fontSize: 12 }} stroke="hsl(var(--muted-foreground))" tickFormatter={(v) => `R$${v/1000}k`} />
-                  <Tooltip formatter={(v: number) => formatCurrency(v)} labelFormatter={(l) => `Dia ${l}`} />
-                  <Area type="monotone" dataKey="valor" stroke="hsl(var(--primary))" fillOpacity={1} fill="url(#colorValor)" strokeWidth={2} />
-                </AreaChart>
-              ) : (
-                <ComposedChart data={vendasPorMes}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
-                  <XAxis dataKey="mes" tick={{ fontSize: 12 }} stroke="hsl(var(--muted-foreground))" />
-                  <YAxis tick={{ fontSize: 12 }} stroke="hsl(var(--muted-foreground))" tickFormatter={(v) => `R$${v/1000}k`} />
-                  <Tooltip formatter={(v: number) => formatCurrency(v)} />
-                  <Legend />
-                  <Bar dataKey="Vendas" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} maxBarSize={50} />
-                  {db.metas.length > 0 && <Line type="stepAfter" dataKey="Meta" stroke="hsl(var(--success))" strokeWidth={2} strokeDasharray="5 5" dot={false} />}
-                </ComposedChart>
-              )}
-            </ResponsiveContainer>
+        <div className="lg:col-span-2 space-y-6">
+          {/* Gráfico 1: Evolução/Vendas por Dia */}
+          <div className="bg-card border border-border rounded-xl p-6 shadow-sm">
+            <h3 className="font-semibold text-card-foreground mb-4 font-mono text-sm uppercase tracking-wider">
+              {viewMode === 'month' ? 'Vendas Diárias' : 'Evolução Mensal vs Meta Principal'}
+            </h3>
+            <div className="h-[300px]">
+              <ResponsiveContainer width="100%" height="100%">
+                {viewMode === 'month' ? (
+                  <BarChart data={vendasPorDia}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
+                    <XAxis dataKey="dia" tick={{ fontSize: 12 }} stroke="hsl(var(--muted-foreground))" />
+                    <YAxis tick={{ fontSize: 12 }} stroke="hsl(var(--muted-foreground))" />
+                    <Tooltip formatter={(v: number) => formatCurrency(v)} labelFormatter={(l) => `Dia ${l}`} />
+                    <Bar dataKey="valor" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                ) : (
+                  <ComposedChart data={vendasPorMes}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
+                    <XAxis dataKey="mes" tick={{ fontSize: 12 }} stroke="hsl(var(--muted-foreground))" />
+                    <YAxis tick={{ fontSize: 12 }} stroke="hsl(var(--muted-foreground))" />
+                    <Tooltip formatter={(v: number) => formatCurrency(v)} />
+                    <Legend iconType="circle" />
+                    <Bar dataKey="Vendas" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} maxBarSize={50} />
+                    {db.metas.length > 0 && <Line type="stepAfter" dataKey="Meta" stroke="hsl(var(--success))" strokeWidth={2} strokeDasharray="5 5" dot={false} />}
+                  </ComposedChart>
+                )}
+              </ResponsiveContainer>
+            </div>
           </div>
+
+          {/* Gráfico 2: Meta vs Realizado (Apenas Mensal) */}
+          {viewMode === 'month' && metaVsRealizado.length > 0 && (
+            <div className="bg-card border border-border rounded-xl p-6 shadow-sm">
+              <h3 className="font-semibold text-card-foreground mb-4 font-mono text-sm uppercase tracking-wider">
+                Progressão Acumulada vs Meta
+              </h3>
+              <div className="h-[300px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={metaVsRealizado}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
+                    <XAxis dataKey="dia" tick={{ fontSize: 12 }} stroke="hsl(var(--muted-foreground))" />
+                    <YAxis tick={{ fontSize: 12 }} stroke="hsl(var(--muted-foreground))" />
+                    <Tooltip formatter={(v: number) => formatCurrency(v)} />
+                    <Legend iconType="circle" />
+                    <Line type="monotone" dataKey="meta" stroke="hsl(var(--success))" strokeWidth={2} dot={false} name="Meta Prevista" />
+                    <Line type="monotone" dataKey="realizado" stroke="hsl(var(--primary))" strokeWidth={3} dot={{ r: 4 }} activeDot={{ r: 6 }} name="Realizado Acumulado" />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="bg-card border border-border rounded-xl p-6 shadow-sm flex flex-col">

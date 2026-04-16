@@ -9,6 +9,7 @@ import { toast } from "sonner";
 import { AlertTriangle, Save, Trash2, Power, PowerOff, Plus, Copy } from "lucide-react";
 import { logSystemAction } from "@/modules/master/services/LogService";
 import React from "react";
+import { formatPhone, formatDocument, formatCEP } from "@/lib/formatters";
 
 class ModalErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean, error: any }> {
   constructor(props: any) {
@@ -34,35 +35,6 @@ class ModalErrorBoundary extends React.Component<{ children: React.ReactNode }, 
     return this.props.children;
   }
 }
-
-const formatPhone = (value: string) => {
-  if (!value || typeof value !== 'string') return "";
-  const numbers = value.replace(/\D/g, "");
-  if (numbers.length === 0) return "";
-  if (numbers.length <= 2) return `(${numbers}`;
-  if (numbers.length <= 6) return `(${numbers.slice(0, 2)}) ${numbers.slice(2)}`;
-  if (numbers.length <= 10) return `(${numbers.slice(0, 2)}) ${numbers.slice(2, 6)}-${numbers.slice(6)}`;
-  return `(${numbers.slice(0, 2)}) ${numbers.slice(2, 7)}-${numbers.slice(7, 11)}`;
-};
-
-const formatDocument = (value: string) => {
-  if (!value || typeof value !== 'string') return "";
-  const numbers = value.replace(/\D/g, "");
-  if (numbers.length <= 11) {
-    let v = numbers;
-    if (v.length > 9) v = v.replace(/(\d{3})(\d{3})(\d{3})(\d{1,2})/, "$1.$2.$3-$4");
-    else if (v.length > 6) v = v.replace(/(\d{3})(\d{3})(\d{1,3})/, "$1.$2.$3");
-    else if (v.length > 3) v = v.replace(/(\d{3})(\d{1,3})/, "$1.$2");
-    return v;
-  } else {
-    let v = numbers.substring(0, 14);
-    if (v.length > 12) v = v.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{1,2})/, "$1.$2.$3/$4-$5");
-    else if (v.length > 8) v = v.replace(/(\d{2})(\d{3})(\d{3})(\d{1,4})/, "$1.$2.$3/$4");
-    else if (v.length > 5) v = v.replace(/(\d{2})(\d{3})(\d{1,3})/, "$1.$2.$3");
-    else if (v.length > 2) v = v.replace(/(\d{2})(\d{1,3})/, "$1.$2");
-    return v;
-  }
-};
 
 export interface Tenant {
   id: string;
@@ -153,6 +125,29 @@ const ManageTenantModal = ({ tenant, open, onClose, onUpdate }: ManageTenantModa
       });
     }
   }, [tenant]);
+
+  const handleCepChange = async (val: string) => {
+    const formatted = formatCEP(val);
+    setFormData(p => ({ ...p, cep: formatted }));
+    
+    const cleanCep = formatted.replace(/\D/g, "");
+    if (cleanCep.length === 8) {
+      try {
+        const res = await fetch(`https://viacep.com.br/ws/${cleanCep}/json/`);
+        const data = await res.json();
+        if (!data.erro) {
+          setFormData(p => ({
+            ...p,
+            rua: data.logradouro,
+            bairro: data.bairro,
+            cidade: data.localidade,
+            estado: data.uf
+          }));
+          toast.success("Endereço localizado!");
+        }
+      } catch (err) {}
+    }
+  };
 
   const handleSave = async () => {
     if (!tenant) return;
@@ -362,7 +357,7 @@ const ManageTenantModal = ({ tenant, open, onClose, onUpdate }: ManageTenantModa
             <div className="grid grid-cols-2 gap-4">
               <div className="grid gap-2">
                 <Label>CEP</Label>
-                <Input value={formData.cep} onChange={e => setFormData(p => ({...p, cep: e.target.value}))} />
+                <Input value={formData.cep} onChange={e => handleCepChange(e.target.value)} maxLength={9} placeholder="00000-000" />
               </div>
               <div className="grid gap-2">
                 <Label>Rua</Label>

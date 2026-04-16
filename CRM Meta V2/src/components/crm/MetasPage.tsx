@@ -3,6 +3,7 @@ import KpiCard from "./KpiCard";
 import MetaCard from "./MetaCard";
 import { useMemo, useState, useEffect, useCallback } from "react";
 import { DollarSign, Activity, TrendingUp, MessageCircle } from "lucide-react";
+import { Button } from "@/components/ui/button";
 
 interface MetasPageProps {
   db: CrmDatabase;
@@ -37,24 +38,25 @@ const MetasPage = ({ db, onAdd, onEdit, onDelete }: MetasPageProps) => {
   }, [db.metas, lancamentosMes]);
 
   return (
-    <div>
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-foreground mb-1">Metas</h1>
+    <div className="space-y-6">
+      <div className="flex flex-col gap-1 mb-6">
+        <h1 className="text-3xl font-bold tracking-tight text-foreground">Metas</h1>
         <p className="text-muted-foreground text-sm">Crie, edite e remova metas para acompanhar quanto precisa vender por dia.</p>
-        <div className="flex gap-3 mt-4 flex-wrap">
-          <button onClick={onAdd} className="px-4 py-2.5 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 transition-opacity">
-            + Nova Meta
-          </button>
-          {db.metas.length > 0 && (
-            <button 
-              onClick={handleShareAllMetas}
-              className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-[#25D366] text-white text-sm font-medium hover:bg-[#20bd5a] transition-colors"
-            >
-              <MessageCircle size={18} />
-              Compartilhar Metas
-            </button>
-          )}
-        </div>
+      </div>
+
+      <div className="flex gap-3 mb-8 flex-wrap">
+        <Button onClick={onAdd} className="rounded-lg font-medium transition-all px-6">
+          + Nova Meta
+        </Button>
+        {db.metas.length > 0 && (
+          <Button 
+            onClick={handleShareAllMetas}
+            className="flex items-center gap-2 rounded-lg bg-[#25D366] text-white font-medium hover:bg-[#20bd5a] transition-colors border-none"
+          >
+            <MessageCircle size={18} />
+            Compartilhar Metas
+          </Button>
+        )}
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 mb-8">

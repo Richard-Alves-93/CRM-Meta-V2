@@ -440,6 +440,14 @@ export type Database = {
           user_id: string
           role: string | null
           tenant_id: string | null
+          email_temp: string | null
+          whatsapp: string | null
+          telefone: string | null
+          documento: string | null
+          cnh: string | null
+          endereco: Json | null
+          permissions: Json | null
+          sector_id: string | null
         }
         Insert: {
           avatar_url?: string | null
@@ -449,6 +457,14 @@ export type Database = {
           user_id: string
           role?: string | null
           tenant_id?: string | null
+          email_temp?: string | null
+          whatsapp?: string | null
+          telefone?: string | null
+          documento?: string | null
+          cnh?: string | null
+          endereco?: Json | null
+          permissions?: Json | null
+          sector_id?: string | null
         }
         Update: {
           avatar_url?: string | null
@@ -458,8 +474,56 @@ export type Database = {
           user_id?: string
           role?: string | null
           tenant_id?: string | null
+          email_temp?: string | null
+          whatsapp?: string | null
+          telefone?: string | null
+          documento?: string | null
+          cnh?: string | null
+          endereco?: Json | null
+          permissions?: Json | null
+          sector_id?: string | null
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "profiles_sector_id_fkey"
+            columns: ["sector_id"]
+            isOneToOne: false
+            referencedRelation: "sectors"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      sectors: {
+        Row: {
+          created_at: string
+          id: string
+          name: string
+          permissions: Json | null
+          tenant_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          name: string
+          permissions?: Json | null
+          tenant_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          name?: string
+          permissions?: Json | null
+          tenant_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sectors_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       tenants: {
         Row: {
