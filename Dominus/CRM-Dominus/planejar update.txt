@@ -1,0 +1,48 @@
+⚠️*NOTIFICAÇÕES DE ATUALIZAÇÃO DOMINUS*
+
+*URGÊNCIA*
+1 Resolver problema da fila de atendimento, cada usuário precisa acessar o histórico completo das mensagens da mesma 
+forma que o ADM acessa, porém sem necessariamente ser um ADM e os demais usuário não podem ver nem interferir nessas msg.
+= *Admin ve todas as mensagens mas usuários só podem ver suas mensagens da conexão.
+
+2 Em Permissões ao desabilitar a opção de um usuário responder o contato de outro não funciona, ele consegue responder o contato mesmo estando desabilitado.
+
+
+
+
+3 Kanban necessita a funcionalidade de múltiplos kanban, além disso necessita uma necessidade que cada usuário
+possa ter seu kanban ou acessar o kanban do ADM, atualmente os usuários não tem acesso a kanban, pelo menos não pra editar só visualizar.
+
+=* https://chatgpt.com/share/e/69ea2354-7d10-800a-8af0-06e874f02cd4 nesse link esta o caminho!
+
+
+
+4 O chat Bot necessita que seja didático, DIGITA A PRA RECEBER B. Ninguém vai sabe mexer, nem eu, tá mais difícil que a vida do Erick assim kkkk
+= * Deixar semelhande ao minechat em questão de configuração para ativar o bot
+
+
+
+5 Conexões, Whats, Face e Insta, se possível deixar tudo que precisa no mesmo lugar ou só scanear e já sair funcionando é mais fácil
+deve dá menos trabalho pro programador menos é mais.
+
+ 
+
+6 Não há necessidade de todo mundo passa por uma fila, o chat Bot tem que dispara sempre que digitar as palavras é mais fácil, só tem
+que saber monta o fluxo depois
+
+
+ 
+
+7 botão de suporte no canto inferior direito, um botão que vc possa selecionar o motivos de suporte e aguardar, o suporte deve ir
+pro nosso chat de atendimento interno
+= *caia direto em uma fila especifiaca com o setor escolhida pelo usuario, apenas o admin pode ter esse acesso ao suporte.
+
+
+
+*SEM URGÊNCIA*
+
+FINANCEIRO, É BOM MAS NAO URGENTE.
+
+
+
+AGENDAMENTO, PODE POR GOOGLE AGENDA ALI? NAO É MT IMPORTANTE MAS É MUITO BOM

@@ -1,0 +1,488 @@
+import React, { useState, useEffect, useReducer, useContext } from "react";
+import { toast } from "react-toastify";
+import { makeStyles } from "@material-ui/core/styles";
+import Paper from "@material-ui/core/Paper";
+import Button from "@material-ui/core/Button";
+import Table from "@material-ui/core/Table";
+import TableBody from "@material-ui/core/TableBody";
+import TableCell from "@material-ui/core/TableCell";
+import TableHead from "@material-ui/core/TableHead";
+import TableRow from "@material-ui/core/TableRow";
+import IconButton from "@material-ui/core/IconButton";
+import SearchIcon from "@material-ui/icons/Search";
+import TextField from "@material-ui/core/TextField";
+import InputAdornment from "@material-ui/core/InputAdornment";
+import CircularProgress from "@material-ui/core/CircularProgress";
+import DeleteOutlineIcon from "@material-ui/icons/DeleteOutline";
+import EditIcon from "@material-ui/icons/Edit";
+import Chip from "@material-ui/core/Chip";
+import Typography from "@material-ui/core/Typography";
+import PersonOutlineIcon from "@material-ui/icons/PersonOutline";
+import AddIcon from "@material-ui/icons/Add";
+import { Avatar, Grid } from "@material-ui/core";
+
+import MainHeader from "../../components/MainHeader";
+import whatsappIcon from "../../assets/nopicture.png";
+import api from "../../services/api";
+import { i18n } from "../../translate/i18n";
+import UserModal from "../../components/UserModal";
+import ConfirmationModal from "../../components/ConfirmationModal";
+import toastError from "../../errors/toastError";
+import UserStatusIcon from "../../components/UserModal/statusIcon";
+import { getBackendUrl } from "../../config";
+import { AuthContext } from "../../context/Auth/AuthContext";
+import ForbiddenPage from "../../components/ForbiddenPage";
+
+const backendUrl = getBackendUrl();
+
+const reducer = (state, action) => {
+  if (action.type === "LOAD_USERS") {
+    const users = action.payload;
+    const newUsers = [];
+
+    users.forEach((user) => {
+      const userIndex = state.findIndex((u) => u.id === user.id);
+      if (userIndex !== -1) {
+        state[userIndex] = user;
+      } else {
+        newUsers.push(user);
+      }
+    });
+
+    return [...state, ...newUsers];
+  }
+
+  if (action.type === "UPDATE_USERS") {
+    const user = action.payload;
+    const userIndex = state.findIndex((u) => u.id === user.id);
+
+    if (userIndex !== -1) {
+      state[userIndex] = user;
+      return [...state];
+    }
+    return [user, ...state];
+  }
+
+  if (action.type === "DELETE_USER") {
+    const userId = action.payload;
+
+    const userIndex = state.findIndex((u) => u.id === userId);
+    if (userIndex !== -1) {
+      state.splice(userIndex, 1);
+    }
+    return [...state];
+  }
+
+  if (action.type === "RESET") {
+    return [];
+  }
+};
+
+const useStyles = makeStyles((theme) => ({
+  pageRoot: {
+    flex: 1,
+    width: "100%",
+    maxWidth: "100%",
+    padding: theme.spacing(2),
+    height: "calc(100% - 48px)",
+    display: "flex",
+    flexDirection: "column",
+    [theme.breakpoints.down("sm")]: {
+      padding: theme.spacing(1),
+    },
+  },
+  pageHeader: {
+    width: "100%",
+    marginBottom: theme.spacing(2),
+    padding: theme.spacing(2),
+    borderRadius: 16,
+    color: "#1e2a44",
+    background: "#EDF4FF",
+    boxShadow: "0 8px 20px rgba(15, 23, 42, 0.06)",
+    [theme.breakpoints.down("sm")]: {
+      padding: theme.spacing(1.5),
+    },
+  },
+  pageHeaderTitle: {
+    fontWeight: 600,
+    letterSpacing: 0.1,
+    fontSize: "1.2rem",
+    [theme.breakpoints.down("sm")]: {
+      fontSize: "1.05rem",
+    },
+  },
+  pageHeaderSubtitle: {
+    marginTop: theme.spacing(0.25),
+    color: "rgba(30,42,68,0.78)",
+    fontSize: "0.8rem",
+    lineHeight: 1.35,
+  },
+  headerChip: {
+    backgroundColor: "#EAF1FF",
+    color: "#2f4b7c",
+    border: "1px solid #d7e5ff",
+    fontWeight: 500,
+    fontSize: "0.72rem",
+    height: 24,
+  },
+  controlsPaper: {
+    marginBottom: theme.spacing(2),
+    borderRadius: 14,
+    border: `1px solid ${theme.palette.divider}`,
+    boxShadow: "0 8px 22px rgba(15, 23, 42, 0.08)",
+    padding: theme.spacing(1.25),
+    backgroundColor: theme.palette.background.paper,
+  },
+  searchField: {
+    "& .MuiOutlinedInput-root": {
+      borderRadius: 10,
+      backgroundColor: theme.palette.background.default,
+    },
+    "& .MuiInputBase-input": {
+      fontSize: "0.82rem",
+      paddingTop: 13,
+      paddingBottom: 13,
+    },
+  },
+  actionButton: {
+    minHeight: 42,
+    borderRadius: 10,
+    fontWeight: 600,
+    fontSize: "0.75rem",
+    padding: theme.spacing(0.8, 1.4),
+    boxShadow: "0 6px 14px rgba(7, 64, 171, 0.14)",
+  },
+  mainPaper: {
+    flex: 1,
+    overflowY: "auto",
+    ...theme.scrollbarStyles,
+    borderRadius: 14,
+    border: `1px solid ${theme.palette.divider}`,
+    boxShadow: "0 12px 26px rgba(17, 24, 39, 0.09)",
+  },
+  tableHeaderCell: {
+    fontWeight: 700,
+    color: theme.palette.text.secondary,
+    backgroundColor:
+      theme.palette.type === "dark"
+        ? "rgba(255,255,255,0.04)"
+        : "rgba(15, 23, 42, 0.03)",
+    fontSize: "0.76rem",
+  },
+  tableRow: {
+    transition: "background-color 0.2s ease",
+    "&:hover": {
+      backgroundColor:
+        theme.palette.type === "dark"
+          ? "rgba(255,255,255,0.03)"
+          : "rgba(15, 23, 42, 0.035)",
+    },
+  },
+  tableCellText: {
+    fontSize: "0.78rem",
+  },
+  userAvatar: {
+    width: theme.spacing(5),
+    height: theme.spacing(5),
+  },
+  avatarDiv: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  actionCell: {
+    minWidth: 120,
+  },
+  actionIconButton: {
+    border: `1px solid ${theme.palette.divider}`,
+    margin: theme.spacing(0, 0.2),
+  },
+  loadingContainer: {
+    display: "flex",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: theme.spacing(3),
+  },
+  loadingText: {
+    marginLeft: theme.spacing(2),
+    fontSize: "0.8rem",
+  },
+}));
+
+const Users = () => {
+  const classes = useStyles();
+
+  const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [pageNumber, setPageNumber] = useState(1);
+  const [hasMore, setHasMore] = useState(false);
+  const [selectedUser, setSelectedUser] = useState(null);
+  const [deletingUser, setDeletingUser] = useState(null);
+  const [userModalOpen, setUserModalOpen] = useState(false);
+  const [confirmModalOpen, setConfirmModalOpen] = useState(false);
+  const [searchParam, setSearchParam] = useState("");
+  const [users, dispatch] = useReducer(reducer, []);
+  const { user: loggedInUser, socket } = useContext(AuthContext);
+  const { profileImage } = loggedInUser;
+
+  useEffect(() => {
+    dispatch({ type: "RESET" });
+    setPageNumber(1);
+  }, [searchParam]);
+
+  useEffect(() => {
+    setLoading(true);
+    const fetchUsers = async () => {
+      try {
+        const { data } = await api.get("/users/", {
+          params: { searchParam, pageNumber },
+        });
+        dispatch({ type: "LOAD_USERS", payload: data.users });
+        setHasMore(data.hasMore);
+      } catch (err) {
+        toastError(err);
+      } finally {
+        setLoading(false);
+        setLoadingMore(false);
+      }
+    };
+    fetchUsers();
+  }, [searchParam, pageNumber]);
+
+  useEffect(() => {
+    if (loggedInUser) {
+      const companyId = loggedInUser.companyId;
+      const onCompanyUser = (data) => {
+        if (data.action === "update" || data.action === "create") {
+          dispatch({ type: "UPDATE_USERS", payload: data.user });
+        }
+        if (data.action === "delete") {
+          dispatch({ type: "DELETE_USER", payload: +data.userId });
+        }
+      };
+      socket.on(`company-${companyId}-user`, onCompanyUser);
+      return () => {
+        socket.off(`company-${companyId}-user`, onCompanyUser);
+      };
+    }
+  }, [socket, loggedInUser]);
+
+  const handleOpenUserModal = () => {
+    setSelectedUser(null);
+    setUserModalOpen(true);
+  };
+
+  const handleCloseUserModal = () => {
+    setSelectedUser(null);
+    setUserModalOpen(false);
+  };
+
+  const handleSearch = (event) => {
+    setSearchParam(event.target.value.toLowerCase());
+  };
+
+  const handleEditUser = (user) => {
+    setSelectedUser(user);
+    setUserModalOpen(true);
+  };
+
+  const handleDeleteUser = async (userId) => {
+    try {
+      await api.delete(`/users/${userId}`);
+      toast.success(i18n.t("users.toasts.deleted"));
+    } catch (err) {
+      toastError(err);
+    }
+    setDeletingUser(null);
+    setSearchParam("");
+    setPageNumber(1);
+  };
+
+  const loadMore = () => {
+    setLoadingMore(true);
+    setPageNumber((prevPage) => prevPage + 1);
+  };
+
+  const handleScroll = (e) => {
+    if (!hasMore || loading) return;
+    const { scrollTop, scrollHeight, clientHeight } = e.currentTarget;
+    if (scrollHeight - (scrollTop + 100) < clientHeight) {
+      loadMore();
+    }
+  };
+
+  const renderProfileImage = (user) => {
+    const src =
+      user.id === loggedInUser.id
+        ? profileImage
+          ? `${backendUrl}/public/avatar/${profileImage}`
+          : whatsappIcon
+        : user.profileImage
+          ? `${backendUrl}/public/avatar/${user.profileImage}`
+          : whatsappIcon;
+
+    return <Avatar src={src} alt={user.name} className={classes.userAvatar} />;
+  };
+
+  return (
+    <div className={classes.pageRoot}>
+      <ConfirmationModal
+        title={
+          deletingUser &&
+          `${i18n.t("users.confirmationModal.deleteTitle")} ${deletingUser.name}?`
+        }
+        open={confirmModalOpen}
+        onClose={() => setConfirmModalOpen(false)}
+        onConfirm={() => handleDeleteUser(deletingUser.id)}
+      >
+        {i18n.t("users.confirmationModal.deleteMessage")}
+      </ConfirmationModal>
+
+      <UserModal
+        open={userModalOpen}
+        onClose={handleCloseUserModal}
+        aria-labelledby="form-dialog-title"
+        userId={selectedUser && selectedUser.id}
+        key={i18n.language}
+      />
+
+      {loggedInUser.profile === "user" ? (
+        <ForbiddenPage />
+      ) : (
+        <>
+          <MainHeader>
+            <Grid container style={{ width: "100%" }}>
+              <Grid item xs={12}>
+                <Paper elevation={0} className={classes.pageHeader}>
+                  <Grid container spacing={2} alignItems="center">
+                    <Grid item xs={12} md={8}>
+                      <Typography className={classes.pageHeaderTitle}>{i18n.t("users.title")}</Typography>
+                      <Typography className={classes.pageHeaderSubtitle}>
+                        Gerencie acessos, perfis e jornada dos usuários da operação.
+                      </Typography>
+                    </Grid>
+                    <Grid item xs={12} md={4} style={{ textAlign: "right" }}>
+                      <Chip
+                        icon={<PersonOutlineIcon style={{ color: "#2f4b7c", fontSize: 14 }} />}
+                        label={`${users.length} usuários`}
+                        className={classes.headerChip}
+                      />
+                    </Grid>
+                  </Grid>
+                </Paper>
+              </Grid>
+
+              <Grid item xs={12}>
+                <Paper elevation={0} className={classes.controlsPaper}>
+                  <Grid container spacing={2}>
+                    <Grid item xs={12} sm={8} md={9}>
+                      <TextField
+                        fullWidth
+                        placeholder={i18n.t("contacts.searchPlaceholder")}
+                        type="search"
+                        value={searchParam}
+                        onChange={handleSearch}
+                        variant="outlined"
+                        className={classes.searchField}
+                        InputProps={{
+                          startAdornment: (
+                            <InputAdornment position="start">
+                              <SearchIcon style={{ color: "gray" }} />
+                            </InputAdornment>
+                          ),
+                        }}
+                      />
+                    </Grid>
+                    <Grid item xs={12} sm={4} md={3}>
+                      <Button
+                        fullWidth
+                        variant="contained"
+                        color="primary"
+                        onClick={handleOpenUserModal}
+                        className={classes.actionButton}
+                        startIcon={<AddIcon />}
+                      >
+                        {i18n.t("users.buttons.add")}
+                      </Button>
+                    </Grid>
+                  </Grid>
+                </Paper>
+              </Grid>
+            </Grid>
+          </MainHeader>
+
+          <Paper className={classes.mainPaper} variant="outlined" onScroll={handleScroll}>
+            <Table size="small">
+              <TableHead>
+                <TableRow>
+                  <TableCell align="center" className={classes.tableHeaderCell}>{i18n.t("users.table.ID")}</TableCell>
+                  <TableCell align="center" className={classes.tableHeaderCell}>{i18n.t("users.table.status")}</TableCell>
+                  <TableCell align="center" className={classes.tableHeaderCell}>Avatar</TableCell>
+                  <TableCell align="center" className={classes.tableHeaderCell}>{i18n.t("users.table.name")}</TableCell>
+                  <TableCell align="center" className={classes.tableHeaderCell}>{i18n.t("users.table.email")}</TableCell>
+                  <TableCell align="center" className={classes.tableHeaderCell}>{i18n.t("users.table.profile")}</TableCell>
+                  <TableCell align="center" className={classes.tableHeaderCell}>{i18n.t("users.table.startWork")}</TableCell>
+                  <TableCell align="center" className={classes.tableHeaderCell}>{i18n.t("users.table.endWork")}</TableCell>
+                  <TableCell align="center" className={classes.tableHeaderCell}>{i18n.t("users.table.actions")}</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                <>
+                  {users.map((user) => (
+                    <TableRow key={user.id} className={classes.tableRow}>
+                      <TableCell align="center" className={classes.tableCellText}>{user.id}</TableCell>
+                      <TableCell align="center" className={classes.tableCellText}><UserStatusIcon user={user} /></TableCell>
+                      <TableCell align="center">
+                        <div className={classes.avatarDiv}>{renderProfileImage(user)}</div>
+                      </TableCell>
+                      <TableCell align="center" className={classes.tableCellText}>{user.name}</TableCell>
+                      <TableCell align="center" className={classes.tableCellText}>{user.email}</TableCell>
+                      <TableCell align="center" className={classes.tableCellText}>{user.profile}</TableCell>
+                      <TableCell align="center" className={classes.tableCellText}>{user.startWork}</TableCell>
+                      <TableCell align="center" className={classes.tableCellText}>{user.endWork}</TableCell>
+                      <TableCell align="center" className={classes.actionCell}>
+                        <IconButton
+                          size="small"
+                          className={classes.actionIconButton}
+                          onClick={() => handleEditUser(user)}
+                        >
+                          <EditIcon />
+                        </IconButton>
+
+                        <IconButton
+                          size="small"
+                          className={classes.actionIconButton}
+                          onClick={() => {
+                            setConfirmModalOpen(true);
+                            setDeletingUser(user);
+                          }}
+                        >
+                          <DeleteOutlineIcon />
+                        </IconButton>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                  {loadingMore && (
+                    <TableRow>
+                      <TableCell colSpan={9} align="center">
+                        <CircularProgress />
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </>
+              </TableBody>
+            </Table>
+            {loading && !loadingMore && (
+              <div className={classes.loadingContainer}>
+                <CircularProgress />
+                <span className={classes.loadingText}>{i18n.t("loading")}</span>
+              </div>
+            )}
+          </Paper>
+        </>
+      )}
+    </div>
+  );
+};
+
+export default Users;

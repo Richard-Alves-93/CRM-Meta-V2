@@ -1,0 +1,32 @@
+.schedule-calendar .event-container {
+  position: relative;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 6px;
+}
+
+.schedule-calendar .event-title {
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  flex: 1;
+}
+
+.schedule-calendar .delete-icon,
+.schedule-calendar .edit-icon {
+  opacity: 0;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  transform: translateY(2px);
+  font-size: 16px;
+}
+
+.schedule-calendar .event-container:hover .delete-icon,
+.schedule-calendar .event-container:hover .edit-icon {
+  opacity: 0.95;
+  transform: translateY(0);
+}
+  

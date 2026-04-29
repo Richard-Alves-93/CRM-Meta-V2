@@ -1,0 +1,547 @@
+/* =========================================================
+   FlowBuilder - Typebot-like Sidebar + Premium UI
+   ========================================================= */
+
+/* Canvas */
+.flow-canvas-container {
+  background-color: #f8fafc;
+  background-image: radial-gradient(rgba(15, 23, 42, 0.12) 1px, transparent 1px);
+  background-size: 18px 18px;
+  width: 100%;
+  height: 100%;
+  flex: 1;
+  min-width: 0;
+}
+
+/* React Flow - controls/minimap */
+.react-flow__controls {
+  box-shadow: 0 8px 24px rgba(16, 24, 40, 0.08);
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.react-flow__controls-button {
+  background: #ffffff;
+  border: none;
+  color: #111827;
+}
+
+.react-flow__controls-button:hover {
+  background: #f9fafb;
+}
+
+.react-flow__minimap {
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(16, 24, 40, 0.08);
+}
+
+.react-flow__node.selected > div {
+  outline: 2px solid rgba(99, 102, 241, 0.28);
+  outline-offset: 2px;
+}
+
+/* =========================================================
+   Sidebar (Typebot-like)
+   ========================================================= */
+.flowbuilder-sidebar {
+  /* Align full height with the flow canvas */
+  position: relative;
+  top: 0;
+  align-self: stretch;
+  height: 100%;
+  max-height: none;
+  overflow: auto;
+
+  width: 272px;
+  flex: 0 0 272px;
+
+  background: rgba(255, 255, 255, 0.98);
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  border-radius: 14px;
+  box-shadow: 0 10px 28px rgba(16, 24, 40, 0.08);
+
+  padding: 10px;
+
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    Arial, "Noto Sans", "Liberation Sans", sans-serif;
+}
+
+.flowbuilder-sidebar::-webkit-scrollbar { width: 10px; }
+.flowbuilder-sidebar::-webkit-scrollbar-thumb {
+  background: rgba(15, 23, 42, 0.10);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+.flowbuilder-sidebar::-webkit-scrollbar-thumb:hover {
+  background: rgba(15, 23, 42, 0.18);
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+
+/* Top: Search + lock */
+.flowbuilder-sidebar__top{
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.flowbuilder-sidebar__search{
+  flex: 1;
+  height: 36px;
+  border-radius: 10px;
+  border: 1px solid rgba(17, 24, 39, 0.10);
+  background: #ffffff;
+  padding: 0 12px;
+  outline: none;
+  font-size: 13px;
+  color: #0f172a;
+}
+
+.flowbuilder-sidebar__search::placeholder{
+  color: rgba(15, 23, 42, 0.45);
+}
+
+.flowbuilder-sidebar__search:focus{
+  border-color: rgba(99, 102, 241, 0.35);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.12);
+}
+
+.flowbuilder-sidebar__lock{
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  border: 1px solid rgba(17, 24, 39, 0.10);
+  background: #ffffff;
+  color: rgba(15, 23, 42, 0.55);
+  cursor: not-allowed;
+}
+
+/* Sections */
+.flowbuilder-sidebar__section{
+  margin-bottom: 10px;
+}
+
+.flowbuilder-sidebar__title {
+  font-size: 11px;
+  font-weight: 600; /* lighter than before */
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgba(15, 23, 42, 0.55);
+  margin: 4px 6px 8px;
+}
+
+/* Grid of chips (Typebot-like) */
+.flowbuilder-sidebar__grid{
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  padding: 0 2px;
+}
+
+.flowbuilder-sidebar__chip{
+  display: flex;
+  align-items: center;
+  gap: 8px;
+
+  height: 34px;
+  padding: 0 9px;
+
+  border-radius: 10px;
+  background: #ffffff;
+  border: 1px solid rgba(17, 24, 39, 0.10);
+
+  color: #0f172a;
+  cursor: pointer;
+  text-align: left;
+
+  transition: transform 120ms ease, box-shadow 120ms ease, border-color 120ms ease;
+}
+
+.flowbuilder-sidebar__chip:hover{
+  transform: translateY(-1px);
+  box-shadow: 0 10px 24px rgba(16, 24, 40, 0.10);
+  border-color: rgba(99, 102, 241, 0.28);
+}
+
+.flowbuilder-sidebar__chip:disabled{
+  opacity: 0.55;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.flowbuilder-sidebar__chipIcon{
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  align-items: center;
+  justify-content: center;
+}
+
+.flowbuilder-sidebar__chipLabel{
+  font-size: 12px;
+  font-weight: 500; /* no bold */
+  line-height: 1;
+  color: rgba(15, 23, 42, 0.85);
+}
+
+/* Hide on small screens */
+@media (max-width: 980px) {
+  .flowbuilder-sidebar {
+    display: none;
+  }
+}
+
+/* =========================================================
+   Nodes (Premium) - used by message/menu/openai nodes
+   ========================================================= */
+.fb-node{
+  width: 250px;
+  position: relative;
+
+  background: rgba(255,255,255,0.96);
+  border: 1px solid rgba(17, 24, 39, 0.10);
+  border-radius: 16px;
+  box-shadow: 0 12px 30px rgba(16, 24, 40, 0.10);
+
+  padding: 12px;
+  transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease;
+
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    Arial, "Noto Sans", "Liberation Sans", sans-serif;
+}
+
+.fb-node:hover{
+  transform: translateY(-1px);
+  box-shadow: 0 18px 46px rgba(16, 24, 40, 0.14);
+  border-color: rgba(99, 102, 241, 0.28);
+}
+
+.react-flow__node.selected .fb-node{
+  outline: 2px solid rgba(99, 102, 241, 0.28);
+  outline-offset: 2px;
+}
+
+.fb-node__header{
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  padding-right: 56px;
+  margin-bottom: 8px;
+}
+
+.fb-node__chip{
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 999px;
+
+  background: rgba(99, 102, 241, 0.10);
+  border: 1px solid rgba(99, 102, 241, 0.18);
+  color: #0f172a;
+  font-size: 13px;
+  font-weight: 600; /* lighter */
+}
+
+.fb-node__body{
+  color: rgba(15, 23, 42, 0.75);
+  font-size: 12.5px;
+  line-height: 1.35;
+  padding-right: 6px;
+}
+
+/* Actions (top-right) */
+.fb-node__actions{
+  position: absolute;
+  right: 10px;
+  top: 10px;
+  display: flex;
+  gap: 6px;
+}
+
+.fb-iconbtn{
+  width: 30px;
+  height: 30px;
+  border-radius: 10px;
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  background: rgba(255,255,255,0.92);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: rgba(15, 23, 42, 0.55);
+  transition: background 120ms ease, transform 120ms ease, color 120ms ease,
+    border-color 120ms ease;
+}
+
+.fb-iconbtn:hover{
+  background: #ffffff;
+  color: rgba(15, 23, 42, 0.80);
+  border-color: rgba(99, 102, 241, 0.22);
+  transform: translateY(-1px);
+}
+
+/* Handles */
+.fb-handle{
+  width: 18px !important;
+  height: 18px !important;
+  border-radius: 999px !important;
+  background: #6366F1 !important;
+  border: 2px solid #ffffff !important;
+  box-shadow: 0 10px 22px rgba(99, 102, 241, 0.28);
+  cursor: pointer;
+}
+
+.fb-handle__arrow{
+  color: #ffffff;
+  width: 10px;
+  height: 10px;
+  margin-left: 4px;
+  margin-bottom: 1px;
+  pointer-events: none;
+}
+
+
+/* =========================================================
+   Workspace alignment (Sidebar + Canvas)
+   ========================================================= */
+.fb-workspace{
+  align-items: stretch;
+  gap: 10px;
+  min-height: 75vh;
+}
+
+/* Ensure canvas and sidebar share the same vertical span */
+.flow-canvas-container{
+  border-radius: 14px;
+  border: 1px solid rgba(17, 24, 39, 0.06);
+  box-shadow: 0 10px 26px rgba(16, 24, 40, 0.06);
+  overflow: hidden;
+}
+
+/* =========================================================
+   Header polish (Title + Buttons)
+   ========================================================= */
+.fb-headerbar{
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 14px;
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  border-radius: 14px;
+  box-shadow: 0 6px 18px rgba(16, 24, 40, 0.06);
+}
+
+.fb-header-left{
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.fb-header-left > *:first-child{
+  /* Title component */
+  margin: 0;
+}
+
+.fb-header-subtitle{
+  font-size: 12px;
+  font-weight: 400;
+  color: rgba(15, 23, 42, 0.62);
+}
+
+.fb-header-actions{
+  display: flex;
+  gap: 8px;
+}
+
+/* Buttons (Material-UI v4) */
+.fb-header-btn{
+  border-radius: 10px !important;
+  padding: 7px 12px !important;
+  text-transform: none !important;
+  font-weight: 500 !important;
+  letter-spacing: 0 !important;
+  box-shadow: 0 8px 16px rgba(16, 24, 40, 0.10) !important;
+  transition: transform 120ms ease, box-shadow 120ms ease, filter 120ms ease !important;
+}
+
+.fb-header-btn:hover{
+  transform: translateY(-1px);
+  box-shadow: 0 10px 22px rgba(16, 24, 40, 0.14) !important;
+  filter: brightness(1.02);
+}
+
+@media (max-width: 1160px) {
+  .fb-headerbar {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .fb-header-actions {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+}
+
+/* Optional: color accents without changing your theme primary */
+.fb-btn-import{ }
+.fb-btn-export{ }
+.fb-btn-save{ }
+
+/* =========================================================
+   Part 2 - Node Compact System (SaaS)
+   ========================================================= */
+.react-flow__node-message > div,
+.react-flow__node-menu > div,
+.react-flow__node-interval > div,
+.react-flow__node-img > div,
+.react-flow__node-audio > div,
+.react-flow__node-video > div,
+.react-flow__node-randomizer > div,
+.react-flow__node-singleBlock > div,
+.react-flow__node-ticket > div,
+.react-flow__node-typebot > div,
+.react-flow__node-openai > div,
+.react-flow__node-question > div,
+.react-flow__node-start > div {
+  padding: 10px !important;
+  border-radius: 12px !important;
+  border: 1px solid rgba(15, 23, 42, 0.1) !important;
+  box-shadow: 0 8px 20px rgba(16, 24, 40, 0.09) !important;
+  transition: transform 120ms ease, box-shadow 120ms ease, border-color 120ms ease !important;
+}
+
+.react-flow__node-message > div:hover,
+.react-flow__node-menu > div:hover,
+.react-flow__node-interval > div:hover,
+.react-flow__node-img > div:hover,
+.react-flow__node-audio > div:hover,
+.react-flow__node-video > div:hover,
+.react-flow__node-randomizer > div:hover,
+.react-flow__node-singleBlock > div:hover,
+.react-flow__node-ticket > div:hover,
+.react-flow__node-typebot > div:hover,
+.react-flow__node-openai > div:hover,
+.react-flow__node-question > div:hover,
+.react-flow__node-start > div:hover {
+  transform: translateY(-1px);
+  border-color: rgba(99, 102, 241, 0.26) !important;
+  box-shadow: 0 12px 26px rgba(16, 24, 40, 0.12) !important;
+}
+
+.react-flow__node-message > div,
+.react-flow__node-menu > div,
+.react-flow__node-interval > div,
+.react-flow__node-randomizer > div,
+.react-flow__node-ticket > div,
+.react-flow__node-typebot > div,
+.react-flow__node-openai > div,
+.react-flow__node-question > div,
+.react-flow__node-start > div {
+  width: 200px !important;
+}
+
+.react-flow__node-singleBlock > div,
+.react-flow__node-img > div,
+.react-flow__node-audio > div,
+.react-flow__node-video > div {
+  width: 220px !important;
+}
+
+.react-flow__node-message > div .MuiSvgIcon-root,
+.react-flow__node-menu > div .MuiSvgIcon-root,
+.react-flow__node-interval > div .MuiSvgIcon-root,
+.react-flow__node-img > div .MuiSvgIcon-root,
+.react-flow__node-audio > div .MuiSvgIcon-root,
+.react-flow__node-video > div .MuiSvgIcon-root,
+.react-flow__node-randomizer > div .MuiSvgIcon-root,
+.react-flow__node-singleBlock > div .MuiSvgIcon-root,
+.react-flow__node-ticket > div .MuiSvgIcon-root,
+.react-flow__node-typebot > div .MuiSvgIcon-root,
+.react-flow__node-openai > div .MuiSvgIcon-root,
+.react-flow__node-question > div .MuiSvgIcon-root,
+.react-flow__node-start > div .MuiSvgIcon-root {
+  width: 15px;
+  height: 15px;
+}
+
+.react-flow__node-message > div [style*="fontSize: 14"],
+.react-flow__node-menu > div [style*="fontSize: 14"],
+.react-flow__node-interval > div [style*="fontSize: 14"],
+.react-flow__node-randomizer > div [style*="fontSize: 14"],
+.react-flow__node-singleBlock > div [style*="fontSize: 14"],
+.react-flow__node-ticket > div [style*="fontSize: 14"],
+.react-flow__node-typebot > div [style*="fontSize: 14"],
+.react-flow__node-openai > div [style*="fontSize: 14"],
+.react-flow__node-question > div [style*="fontSize: 14"],
+.react-flow__node-start > div [style*="fontSize: 14"] {
+  font-size: 13px !important;
+}
+
+.react-flow__node-message > div [style*="fontSize: 12"],
+.react-flow__node-menu > div [style*="fontSize: 12"],
+.react-flow__node-interval > div [style*="fontSize: 12"],
+.react-flow__node-randomizer > div [style*="fontSize: 12"],
+.react-flow__node-singleBlock > div [style*="fontSize: 12"],
+.react-flow__node-ticket > div [style*="fontSize: 12"],
+.react-flow__node-typebot > div [style*="fontSize: 12"],
+.react-flow__node-openai > div [style*="fontSize: 12"],
+.react-flow__node-question > div [style*="fontSize: 12"],
+.react-flow__node-start > div [style*="fontSize: 12"] {
+  font-size: 11px !important;
+}
+
+.react-flow__node-message > div .react-flow__handle,
+.react-flow__node-menu > div .react-flow__handle,
+.react-flow__node-interval > div .react-flow__handle,
+.react-flow__node-img > div .react-flow__handle,
+.react-flow__node-audio > div .react-flow__handle,
+.react-flow__node-video > div .react-flow__handle,
+.react-flow__node-randomizer > div .react-flow__handle,
+.react-flow__node-singleBlock > div .react-flow__handle,
+.react-flow__node-ticket > div .react-flow__handle,
+.react-flow__node-typebot > div .react-flow__handle,
+.react-flow__node-openai > div .react-flow__handle,
+.react-flow__node-question > div .react-flow__handle,
+.react-flow__node-start > div .react-flow__handle {
+  width: 16px !important;
+  height: 16px !important;
+  border: 2px solid #ffffff !important;
+  box-shadow: 0 8px 18px rgba(99, 102, 241, 0.24) !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+
+.react-flow__node-message > div audio,
+.react-flow__node-video > div video,
+.react-flow__node-img > div img {
+  border-radius: 10px;
+}
+
+.react-flow__node-message > div .react-flow__handle .MuiSvgIcon-root,
+.react-flow__node-menu > div .react-flow__handle .MuiSvgIcon-root,
+.react-flow__node-interval > div .react-flow__handle .MuiSvgIcon-root,
+.react-flow__node-img > div .react-flow__handle .MuiSvgIcon-root,
+.react-flow__node-audio > div .react-flow__handle .MuiSvgIcon-root,
+.react-flow__node-video > div .react-flow__handle .MuiSvgIcon-root,
+.react-flow__node-randomizer > div .react-flow__handle .MuiSvgIcon-root,
+.react-flow__node-singleBlock > div .react-flow__handle .MuiSvgIcon-root,
+.react-flow__node-ticket > div .react-flow__handle .MuiSvgIcon-root,
+.react-flow__node-typebot > div .react-flow__handle .MuiSvgIcon-root,
+.react-flow__node-openai > div .react-flow__handle .MuiSvgIcon-root,
+.react-flow__node-question > div .react-flow__handle .MuiSvgIcon-root,
+.react-flow__node-start > div .react-flow__handle .MuiSvgIcon-root {
+  width: 9px !important;
+  height: 9px !important;
+  margin: 0 !important;
+  color: #ffffff !important;
+}

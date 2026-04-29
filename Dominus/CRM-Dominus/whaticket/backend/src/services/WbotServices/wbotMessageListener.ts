@@ -1,0 +1,6592 @@
+// @ts-nocheck
+import path, { join } from "path";
+import { readFile, writeFile } from "fs/promises";
+import fs from "fs";
+import { createHash } from "crypto";
+import * as Sentry from "@sentry/node";
+import { isNil, isNull } from "lodash";
+import { REDIS_URI_MSG_CONN } from "../../config/redis";
+import axios from "axios";
+import NodeCache from "node-cache";
+
+import type {
+  AnyMessageContent,
+  GroupMetadata,
+  MediaType,
+  MessageUpsertType,
+  proto,
+  WAMessage,
+  WAMessageStubType,
+  WAMessageUpdate,
+  WASocket
+} from "baileys";
+import { supabase } from "../../libs/supabaseClient";
+import { Mutex } from "async-mutex";
+import { getIO } from "../../libs/socket";
+import CreateMessageService from "../MessageServices/CreateMessageService";
+import logger from "../../utils/logger";
+import CreateOrUpdateContactService from "../ContactServices/CreateOrUpdateContactService";
+import FindOrCreateTicketService from "../TicketServices/FindOrCreateTicketService";
+import ShowWhatsAppService from "../WhatsappService/ShowWhatsAppService";
+import { debounce } from "../../helpers/Debounce";
+import formatBody from "../../helpers/Mustache";
+import SendWhatsAppMessage from "./SendWhatsAppMessage";
+import sendFaceMessage from "../FacebookServices/sendFacebookMessage"; // check if this name is correct
+import moment from "moment";
+import FindOrCreateATicketTrakingService from "../TicketServices/FindOrCreateATicketTrakingService";
+import VerifyCurrentSchedule from "../CompanyService/VerifyCurrentSchedule";
+import { campaignQueue, parseToMilliseconds, randomValue } from "../../queues";
+import { sayChatbot } from "./ChatBotListener";
+import MarkDeleteWhatsAppMessage from "./MarkDeleteWhatsAppMessage";
+
+import ListUserQueueServices from "../UserQueueServices/ListUserQueueServices";
+import cacheLayer from "../../libs/cache";
+import { addLogs } from "../../helpers/addLogs";
+import SendWhatsAppMedia, { getMessageOptions } from "./SendWhatsAppMedia";
+import UpdateTicketService from "../TicketServices/UpdateTicketService";
+import ShowQueueIntegrationService from "../QueueIntegrationServices/ShowQueueIntegrationService";
+import { createDialogflowSessionWithModel } from "../QueueIntegrationServices/CreateSessionDialogflow";
+import { queryDialogFlow } from "../QueueIntegrationServices/QueryDialogflow";
+import CreateLogTicketService from "../TicketServices/CreateLogTicketService";
+import ShowFileService from "../FileServices/ShowService";
+import { acquireTicketWelcomeLock, releaseTicketWelcomeLock } from "../../libs/ticketLock";
+import { getWidFromMsg } from "../../helpers/getWid";
+
+import OpenAI from "openai";
+import ffmpeg from "fluent-ffmpeg";
+import {
+  SpeechConfig,
+  SpeechSynthesizer,
+  AudioConfig
+} from "microsoft-cognitiveservices-speech-sdk";
+import typebotListener from "../TypebotServices/typebotListener";
+import pino from "pino";
+import BullQueues from "../../libs/queue";
+import { Transform } from "stream";
+import { msgDB } from "../../libs/wbot";
+import {CheckSettings1, CheckCompanySetting} from "../../helpers/CheckSettings";
+import { title } from "process";
+import { IConnections, INodes } from "../WebhookService/DispatchWebHookService";
+import { ActionsWebhookService } from "../WebhookService/ActionsWebhookService";
+import { add, differenceInMilliseconds } from "date-fns";
+import ShowTicketService from "../TicketServices/ShowTicketService";
+import { handleOpenAi } from "../IntegrationsServices/OpenAiService";
+import { IOpenAi } from "../../@types/openai";
+import HandleNpsReplyService from "../TicketServices/HandleNpsReplyService";
+import type { MessageUserReceiptUpdate } from "baileys";
+import { dynamicImport } from "../../utils/dynamicImport";
+
+let baileysMod: typeof import("baileys") | null = null;
+let getContentTypeRef: any = (message: any) =>
+  message && typeof message === "object" ? Object.keys(message)[0] : undefined;
+let extractMessageContentRef: any = (message: any) => message;
+let jidNormalizedUserRef: any = (jid: string) => jid;
+let generateWAMessageFromContentRef: any = (..._args: any[]) => {
+  throw new Error("Baileys module not initialized yet");
+};
+let WAMessageStubTypeRef: Partial<typeof import("baileys").WAMessageStubType> =
+  {};
+
+async function getBaileys() {
+  if (!baileysMod) {
+    baileysMod = await dynamicImport("baileys");
+    getContentTypeRef = baileysMod.getContentType;
+    extractMessageContentRef = baileysMod.extractMessageContent;
+    jidNormalizedUserRef = baileysMod.jidNormalizedUser;
+    generateWAMessageFromContentRef = baileysMod.generateWAMessageFromContent;
+    WAMessageStubTypeRef = baileysMod.WAMessageStubType;
+  }
+  return baileysMod;
+}
+
+void getBaileys();
+
+const getContentType = (...args: any[]) => getContentTypeRef(...args);
+const extractMessageContent = (...args: any[]) => extractMessageContentRef(...args);
+const jidNormalizedUser = (...args: any[]) => jidNormalizedUserRef(...args);
+const generateWAMessageFromContent = (...args: any[]) =>
+  generateWAMessageFromContentRef(...args);
+const delay = async (...args: any[]) => (await getBaileys()).delay(args[0]);
+const downloadMediaMessage = async (...args: any[]) =>
+  (await getBaileys() as any).downloadMediaMessage(...args);
+const downloadContentFromMessage = async (...args: any[]) =>
+  (await getBaileys() as any).downloadContentFromMessage(...args);
+const generateWAMessageContent = async (...args: any[]) =>
+  (await getBaileys() as any).generateWAMessageContent(...args);
+
+// Cache otimizado para LID migration performance conforme v7.0.0-rc.3
+const lidCache = new NodeCache({
+  stdTTL: 300, // 5 minutos
+  maxKeys: 10000,
+  checkperiod: 60,
+  useClones: false
+});
+
+const addressingModeCache = new NodeCache({
+  stdTTL: 600, // 10 minutos  
+  maxKeys: 5000,
+  checkperiod: 120,
+  useClones: false
+});
+
+// Cache para phoneNumber attributes de participantes de grupo
+const participantPhoneCache = new NodeCache({
+  stdTTL: 1800, // 30 minutos
+  maxKeys: 15000,
+  checkperiod: 300,
+  useClones: false
+});
+
+// Função para extrair o número real do WhatsApp de mensagens @lid
+const extractRealWhatsAppNumber = (msg: proto.IWebMessageInfo): string | null => {
+  const remoteJid = msg.key.remoteJid;
+  
+  if (!remoteJid?.endsWith("@lid")) {
+    // Se não é @lid, extrai o número normalmente
+    return remoteJid?.replace(/\D/g, "") || null;
+  }
+  
+  // Log detalhado para mensagens @lid
+  console.log("=".repeat(50));
+  console.log("=== MENSAGEM @LID DETECTADA ===");
+  console.log(`RemoteJid: ${remoteJid}`);
+  
+  // Verifica todas as possíveis fontes de número - PRIORIDADE: remoteJidAlt
+  const remoteJidAlt = (msg.key as any)?.remoteJidAlt;
+  const senderPn = (msg as any)?.key?.senderPn || (msg as any)?.senderPn;
+  const participantPn = (msg as any)?.key?.participantPn || (msg as any)?.participantPn;
+  const phoneNumber = (msg as any)?.phoneNumber;
+  const participant = msg.key.participant;
+  
+  console.log(`RemoteJidAlt: ${remoteJidAlt || "NÃO DISPONÍVEL"}`);
+  console.log(`SenderPn: ${senderPn || "NÃO DISPONÍVEL"}`);
+  console.log(`ParticipantPn: ${participantPn || "NÃO DISPONÍVEL"}`);
+  console.log(`PhoneNumber: ${phoneNumber || "NÃO DISPONÍVEL"}`);
+  console.log(`Participant: ${participant || "NÃO DISPONÍVEL"}`);
+  console.log(`FromMe: ${msg.key.fromMe}`);
+  
+  let contactId = remoteJid; // fallback
+  let source = "UNKNOWN";
+  
+  // Prioridade: remoteJidAlt > senderPn > participantPn > phoneNumber > participant
+  if (remoteJidAlt) {
+    contactId = remoteJidAlt;
+    source = "remoteJidAlt";
+  } else if (senderPn) {
+    contactId = senderPn;
+    source = "senderPn";
+  } else if (participantPn) {
+    contactId = participantPn;
+    source = "participantPn";
+  } else if (phoneNumber) {
+    contactId = phoneNumber;
+    source = "phoneNumber";
+  } else if (participant) {
+    contactId = participant;
+    source = "participant";
+  }
+  
+  // Extrai apenas os números do contactId final
+  const realNumber = contactId.replace(/\D/g, "");
+  
+  console.log(`🎯 USANDO PARA CONTATO: ${contactId}`);
+  console.log(`🎯 NÚMERO EXTRAÍDO: ${realNumber} (fonte: ${source})`);
+  console.log("=== FIM LOG @LID ===");
+  console.log("=".repeat(50));
+  
+  return realNumber;
+};
+
+// Função otimizada para resolução de remoteJid com LID v7.0.0-rc.3
+// Função otimizada para resolução de remoteJid com LID v7.0.0-rc.3
+// Função otimizada para resolução de remoteJid com LID v7.0.0-rc.3
+const resolveRemoteJid = (msg: proto.IWebMessageInfo, ticket: any): string => {
+
+  const remoteJid = msg.key.remoteJid;
+
+  // SE NÃO É @LID OU JID PADRÃO, RETORNA COMO ESTÁ
+  if (!remoteJid?.endsWith("@lid") && !remoteJid?.includes(':')) {
+    return remoteJid;
+  }
+
+  const cacheKey = `remoteJid_${remoteJid}_${msg.key.id}`;
+  const cached = lidCache.get(cacheKey) as string | undefined;
+  if (cached) return cached;
+
+  let resolved = remoteJid;
+  // PRIORIDADE 1: remoteJidAlt (MAIS CONFIÁVEL)
+  if ((msg.key as any)?.remoteJidAlt) {
+    resolved = (msg.key as any).remoteJidAlt;
+    console.log(`📱 RESOLVIDO VIA remoteJidAlt: ${resolved}`);
+  }
+  // PRIORIDADE 2: senderPn
+  else if ((msg.key as any)?.senderPn) {
+    const suffix = ticket.isGroup ? "@g.us" : "@s.whatsapp.net";
+    resolved = `${(msg.key as any).senderPn}${suffix}`;
+    console.log(`📱 RESOLVIDO VIA senderPn: ${resolved}`);
+  }
+  
+  // NORMALIZAÇÃO FINAL E OBRIGATÓRIA - REMOVE QUALQUER SUFIXO NUMÉRICO (:1, :2, etc.)
+  if (resolved && resolved.includes(':')) {
+    resolved = resolved.split(':')[0] + (ticket.isGroup ? "@g.us" : "@s.whatsapp.net");
+    console.log(`✨ JID FINAL NORMALIZADO: ${resolved}`);
+  }
+
+  // CACHE POR 5 MINUTOS
+  lidCache.set(cacheKey, resolved, 300);
+  return resolved;
+};
+
+function emitAppMessage(companyId: number | string, ticketId: number | string, payload: any) {
+  const io = getIO();
+
+  // raiz (sem namespace)
+  io.emit("appMessage", payload);
+  io.emit(`company-${companyId}-appMessage`, payload);
+
+  // namespace por empresa (formas "123" e "/123")
+  const ns = io.of(String(companyId));
+  ns.emit("appMessage", payload);
+  ns.emit(`company-${companyId}-appMessage`, payload);
+
+  const nsAlt = io.of(`/${companyId}`);
+  nsAlt.emit("appMessage", payload);
+  nsAlt.emit(`company-${companyId}-appMessage`, payload);
+
+  // rooms
+  io.to(String(ticketId)).emit("appMessage", payload);
+  ns.to(String(ticketId)).emit("appMessage", payload);
+  io.to(`company-${companyId}`).emit("appMessage", payload);
+  ns.to(`company-${companyId}`).emit("appMessage", payload);
+
+  // aliases comuns
+  io.emit("message", payload);
+  ns.emit("message", payload);
+  io.to(String(ticketId)).emit("message", payload);
+
+  io.emit("chat:ack", payload);
+  ns.emit("chat:ack", payload);
+  io.to(String(ticketId)).emit("chat:ack", payload);
+}
+
+
+
+
+function getTextFromBaileysMsg(wm: any): string {
+  // desencaixa mensagens efêmeras
+  const root = wm?.message?.ephemeralMessage?.message ?? wm?.message ?? {};
+  return (
+    root?.conversation ??
+    root?.extendedTextMessage?.text ??
+    root?.imageMessage?.caption ??
+    root?.videoMessage?.caption ??
+    root?.buttonsResponseMessage?.selectedDisplayText ??
+    root?.listResponseMessage?.singleSelectReply?.selectedRowId ??
+    root?.templateButtonReplyMessage?.selectedId ??
+    ""
+  ).toString().trim();
+}
+
+const os = require("os");
+
+const request = require("request");
+
+let i = 0;
+
+setInterval(() => {
+  i = 0;
+}, 5000);
+
+type Session = WASocket & {
+  id?: number;
+};
+
+interface ImessageUpsert {
+  messages: proto.IWebMessageInfo[];
+  type: MessageUpsertType;
+}
+
+interface IMe {
+  name: string;
+  id: string;
+}
+
+interface SessionOpenAi extends OpenAI {
+  id?: number;
+}
+const sessionsOpenAi: SessionOpenAi[] = [];
+
+function removeFile(directory) {
+  fs.unlink(directory, error => {
+    if (error) throw error;
+  });
+}
+
+const getTimestampMessage = (msgTimestamp: any) => {
+  return msgTimestamp * 1;
+};
+
+// ===== [LID/JID] util =====
+// Otimizado para v7.0.0-rc.3 - fallback addressing_mode detection by sender suffix
+const parseLidJid = (peerId?: string, senderSuffix?: string) => {
+  if (!peerId) return { lid: null as string | null, jid: null as string | null };
+  
+  const cacheKey = `lid_${peerId}_${senderSuffix || 'none'}`;
+  const cached = lidCache.get(cacheKey);
+  if (cached) return cached;
+  
+  const id = String(peerId).toLowerCase();
+  let result;
+  
+  // Detecção otimizada de addressing_mode com fallback por sender suffix
+  if (id.endsWith("@lid")) {
+    result = { lid: id, jid: null };
+  } else if (id.endsWith("@s.whatsapp.net") || id.endsWith("@c.us") || id.endsWith("@g.us")) {
+    result = { lid: null, jid: id };
+  } else if (senderSuffix) {
+    // Fallback usando sender suffix conforme v7.0.0-rc.3
+    const suffix = senderSuffix.toLowerCase();
+    if (suffix.includes("lid")) {
+      result = { lid: `${id}@lid`, jid: null };
+    } else {
+      result = { lid: null, jid: id.includes("@") ? id : `${id}@s.whatsapp.net` };
+    }
+  } else {
+    // fallback padrão: trate como jid
+    result = { lid: null, jid: id.includes("@") ? id : `${id}@s.whatsapp.net` };
+  }
+  
+  // Cache do resultado para performance
+  lidCache.set(cacheKey, result);
+  return result;
+};
+// ===========================
+
+const multVecardGet = function (param: any) {
+  let output = " ";
+
+  let name = param
+    .split("\n")[2]
+    .replace(";;;", "\n")
+    .replace("N:", "")
+    .replace(";", "")
+    .replace(";", " ")
+    .replace(";;", " ")
+    .replace("\n", "");
+  let inicio = param.split("\n")[4].indexOf("=");
+  let fim = param.split("\n")[4].indexOf(":");
+  let contact = param
+    .split("\n")[4]
+    .substring(inicio + 1, fim)
+    .replace(";", "");
+  let contactSemWhats = param.split("\n")[4].replace("item1.TEL:", "");
+  //console.log(contact);
+  if (contact != "item1.TEL") {
+    output = output + name + ": 📞" + contact + "" + "\n";
+  } else output = output + name + ": 📞" + contactSemWhats + "" + "\n";
+  return output;
+};
+
+const contactsArrayMessageGet = (msg: any) => {
+  let contactsArray = msg.message?.contactsArrayMessage?.contacts;
+  let vcardMulti = contactsArray.map(function (item, indice) {
+    return item.vcard;
+  });
+
+  let bodymessage = ``;
+  vcardMulti.forEach(function (vcard, indice) {
+    bodymessage += vcard + "\n\n" + "";
+  });
+
+  let contacts = bodymessage.split("BEGIN:");
+
+  contacts.shift();
+  let finalContacts = "";
+  for (let contact of contacts) {
+    finalContacts = finalContacts + multVecardGet(contact);
+  }
+
+  return finalContacts;
+};
+
+const getTypeMessage = (msg: proto.IWebMessageInfo): string => {
+  const msgType = getContentType(msg.message);
+  if (msg.message?.extendedTextMessage && msg.message?.extendedTextMessage?.contextInfo && msg.message?.extendedTextMessage?.contextInfo?.externalAdReply) {
+    return 'adMetaPreview'; // Adicionado para tratar mensagens de anúncios;
+  }
+  if (msg.message?.viewOnceMessageV2) {
+    return "viewOnceMessageV2";
+  }
+  return msgType;
+};
+const getAd = (msg: any): string => {
+  if (
+    msg.key.fromMe &&
+    msg.message?.listResponseMessage?.contextInfo?.externalAdReply
+  ) {
+    let bodyMessage = `*${msg.message?.listResponseMessage?.contextInfo?.externalAdReply?.title}*`;
+
+    bodyMessage += `\n\n${msg.message?.listResponseMessage?.contextInfo?.externalAdReply?.body}`;
+
+    return bodyMessage;
+  }
+};
+
+const getBodyButton = (msg: any): string => {
+  try {
+    if (
+      msg?.messageType === "buttonsMessage" ||
+      msg?.message?.buttonsMessage?.contentText
+    ) {
+      let bodyMessage = `[BUTTON]\n\n*${msg?.message?.buttonsMessage?.contentText}*\n\n`;
+      // eslint-disable-next-line no-restricted-syntax
+      for (const button of msg.message?.buttonsMessage?.buttons) {
+        bodyMessage += `*${button.buttonId}* - ${button.buttonText.displayText}\n`;
+      }
+
+      return bodyMessage;
+    }
+    if (msg?.messageType === "viewOnceMessage" || msg?.message?.viewOnceMessage?.message?.interactiveMessage) {
+      let bodyMessage = '';
+      const buttons =
+        msg?.message?.viewOnceMessage?.message?.interactiveMessage?.nativeFlowMessage?.buttons;
+
+      const bodyTextWithPix = buttons?.[0]?.name === 'review_and_pay';
+      const bodyTextWithButtons = msg?.message?.viewOnceMessage?.message?.interactiveMessage?.body?.text;
+
+      if (bodyTextWithPix) {
+        bodyMessage += `[PIX]`;
+      } else
+        if (bodyTextWithButtons) {
+          bodyMessage += `[BOTOES]`;
+        }
+
+      return bodyMessage;
+    }
+
+    if (msg?.messageType === "interactiveMessage" || msg?.message?.interactiveMessage) {
+      let bodyMessage = '';
+      console.log('mensagem enviada pelo cel', msg);
+
+      // Verifica se há botões na mensagem
+      const buttons = msg?.message?.interactiveMessage?.nativeFlowMessage?.buttons;
+      console.log("Buttons:", buttons);
+
+      // Verifica se buttons é um array e se contém o botão 'reviewand_pay'
+      const bodyTextWithPix = Array.isArray(buttons) && buttons.some(button => button.name = 'review_and_pay');
+
+      if (bodyTextWithPix) {
+        bodyMessage += `[PIX]`;
+        console.log("Mensagem de PIX detectada, adicionando [PIX] ao bodyMessage.");
+      } else {
+        console.log("Nenhuma mensagem de PIX encontrada.");
+      }
+
+      // Log do bodyMessage final antes do retorno
+      console.log("bodyMessage final:", bodyMessage);
+      // Retornar bodyMessage se não estiver vazio
+      return bodyMessage || null; // Verifique se este ponto é alcançado
+  }
+
+    if (msg?.messageType === "viewOnceMessage" || msg?.message?.viewOnceMessage?.message?.interactiveMessage) {
+      let bodyMessage = '';
+
+      // Verifica se é uma mensagem de PIX (PIX)
+      const bodyTextWithPix = msg?.message?.viewOnceMessage?.message?.interactiveMessage?.header?.title;
+      // Verifica se é uma mensagem com botões (BOTOES)
+      const bodyTextWithButtons = msg?.message?.viewOnceMessage?.message?.interactiveMessage?.body?.text;
+
+      if (bodyTextWithPix) {
+        bodyMessage += `[PIX]`;
+      } else
+        if (bodyTextWithButtons) {
+          bodyMessage += `[BOTOES]`;
+        }
+
+      return bodyMessage;
+    }
+
+
+    if (msg?.messageType === "listMessage" || msg?.message?.listMessage?.description) {
+      let bodyMessage = `[LIST]\n\n`;
+      bodyMessage += msg?.message?.listMessage?.title ? `*${msg?.message?.listResponseMessage?.title}**\n` : 'sem titulo\n';
+      bodyMessage += msg?.message?.listMessage?.description ? `*${msg?.message?.listResponseMessage?.description}*\n\n` : 'sem descrição\n\n';
+      bodyMessage += msg?.message?.listMessage?.footerText ? `${msg?.message?.listResponseMessage?.footerText}\n\n` : '\n\n';
+      const sections = msg?.message?.listMessage?.sections;
+      if (sections && sections.length > 0) {
+        for (const section of sections) {
+          bodyMessage += section?.title ? `*${section.title}*\n` : 'Sem titulo';
+          const rows = section?.rows;
+          if (rows && rows.length > 0) {
+            for (const row of rows) {
+              const rowTitle = row?.title || '';
+              const rowDescription = row?.description || 'Sem descrição';
+              const rowId = row?.rowId || '';
+              bodyMessage += `${rowTitle} - ${rowDescription} - ${rowId}\n`;
+            }
+          }
+          bodyMessage += `\n`;
+        }
+      }
+      return bodyMessage;
+    }
+
+  } catch (error) {
+    logger.error(error);
+  }
+};
+
+const getBodyPIX = (msg: any): string => {
+  try {
+    // Verifica se é uma mensagem interativa
+    if (msg?.messageType === "interactiveMessage" || msg?.message?.interactiveMessage) {
+      let bodyMessage = '[PIX]'; // Inicializa bodyMessage com [PIX]
+      console.log('mensagem enviada pelo cel', msg);
+
+      // Verifica se há botões na mensagem
+      const buttons = msg?.message?.interactiveMessage?.nativeFlowMessage?.buttons;
+      console.log("Buttons:", buttons);
+
+      // Se buttons existe e contém o botão 'review_and_pay'
+      const bodyTextWithPix = Array.isArray(buttons) && buttons.some(button => button.name = 'review_and_pay');
+
+      // Se o botão específico foi encontrado
+      if (bodyTextWithPix) {
+        console.log("Mensagem de PIX detectada.");
+      } else {
+        console.log("Nenhuma mensagem de PIX encontrada.");
+        return ''; // Retorna vazio se não encontrar o botão
+      }
+
+      // Log do bodyMessage final antes do retorno
+      console.log("bodyMessage final:", bodyMessage);
+      return bodyMessage; // Retorna [PIX]
+    }
+  } catch (error) {
+    console.error("Erro ao processar mensagem:", error);
+  }
+
+  return ''; // Retorna uma string vazia se a condição inicial não for satisfeita
+};
+
+const toBase64Safe = (value: any): string | null => {
+  if (!value) return null;
+  try {
+    return Buffer.from(value).toString("base64");
+  } catch {
+    return null;
+  }
+};
+
+const msgLocation = (image, latitude, longitude) => {
+  if (image) {
+    var b64 = Buffer.from(image).toString("base64");
+
+    let data = `data:image/png;base64, ${b64} | https://maps.google.com/maps?q=${latitude}%2C${longitude}&z=17&hl=pt-BR|${latitude}, ${longitude} `;
+    return data;
+  }
+};
+
+export const getBodyMessage = (msg: proto.IWebMessageInfo): string | null => {
+  try {
+    let type = getTypeMessage(msg);
+
+    if (type === undefined) console.log(JSON.stringify(msg));
+
+    const types = {
+      conversation: msg.message?.conversation,
+      imageMessage: msg.message?.imageMessage?.caption,
+      videoMessage: msg.message?.videoMessage?.caption,
+      ptvMessage: msg.message?.ptvMessage?.caption,
+      extendedTextMessage: msg?.message?.extendedTextMessage?.text,
+      buttonsResponseMessage:
+        msg.message?.buttonsResponseMessage?.selectedDisplayText,
+      listResponseMessage:
+        msg.message?.listResponseMessage?.title ||
+        msg.message?.listResponseMessage?.singleSelectReply?.selectedRowId,
+      templateButtonReplyMessage:
+        msg.message?.templateButtonReplyMessage?.selectedId,
+      messageContextInfo:
+        msg.message?.buttonsResponseMessage?.selectedButtonId ||
+        msg.message?.listResponseMessage?.title,
+      buttonsMessage:
+        getBodyButton(msg) || msg.message?.listResponseMessage?.title,
+      stickerMessage: "sticker",
+      contactMessage: msg.message?.contactMessage?.vcard,
+      contactsArrayMessage:
+        msg.message?.contactsArrayMessage?.contacts &&
+        contactsArrayMessageGet(msg),
+      locationMessage:
+        msgLocation(
+          msg.message?.locationMessage?.jpegThumbnail,
+          msg.message?.locationMessage?.degreesLatitude,
+          msg.message?.locationMessage?.degreesLongitude
+        ) ||
+        `https://maps.google.com/maps?q=${msg.message?.locationMessage?.degreesLatitude}%2C${msg.message?.locationMessage?.degreesLongitude}&z=17&hl=pt-BR`,
+      liveLocationMessage: `Latitude: ${msg.message?.liveLocationMessage?.degreesLatitude} - Longitude: ${msg.message?.liveLocationMessage?.degreesLongitude}`,
+      documentMessage: msg.message?.documentMessage?.caption,
+      audioMessage: "Áudio",
+      interactiveMessage: getBodyPIX(msg),
+      listMessage:
+        getBodyButton(msg) || msg.message?.listResponseMessage?.title,
+        viewOnceMessage: getBodyButton(msg) || msg.message?.listResponseMessage?.singleSelectReply?.selectedRowId,
+      reactionMessage: msg.message?.reactionMessage?.text || "reaction",
+      senderKeyDistributionMessage:
+        msg?.message?.senderKeyDistributionMessage
+          ?.axolotlSenderKeyDistributionMessage,
+      documentWithCaptionMessage:
+        msg.message?.documentWithCaptionMessage?.message?.documentMessage
+          ?.caption,
+      viewOnceMessageV2:
+        msg.message?.viewOnceMessageV2?.message?.imageMessage?.caption,
+        adMetaPreview: msgAdMetaPreview(
+          msg.message?.extendedTextMessage?.contextInfo?.externalAdReply?.thumbnail,
+          msg.message?.extendedTextMessage?.contextInfo?.externalAdReply?.title,
+          msg.message?.extendedTextMessage?.contextInfo?.externalAdReply?.body,
+          msg.message?.extendedTextMessage?.contextInfo?.externalAdReply?.sourceUrl,
+          msg.message?.extendedTextMessage?.text
+        ), // Adicionado para tratar mensagens de anúncios;
+      editedMessage:
+        msg?.message?.protocolMessage?.editedMessage?.conversation ||
+        msg?.message?.editedMessage?.message?.protocolMessage?.editedMessage
+          ?.conversation,
+      ephemeralMessage:
+        msg.message?.ephemeralMessage?.message?.extendedTextMessage?.text,
+      imageWhitCaptionMessage:
+        msg?.message?.ephemeralMessage?.message?.imageMessage,
+      highlyStructuredMessage: msg.message?.highlyStructuredMessage,
+      protocolMessage:
+        msg?.message?.protocolMessage?.editedMessage?.conversation,
+      advertising:
+        getAd(msg) ||
+        msg.message?.listResponseMessage?.contextInfo?.externalAdReply?.title,
+        pollCreationMessageV3: msg?.message?.pollCreationMessageV3 ? `*Enquete*\n${msg.message.pollCreationMessageV3.name}\n\n${msg.message.pollCreationMessageV3.options.map(option => option.optionName).join('\n')}` : null,
+      eventMessage: msg?.message?.eventMessage?.name ? `*Nome do Evento: ${msg.message.eventMessage.name}*\n` : 'sem nome do evento\n',
+    };
+
+    const objKey = Object.keys(types).find(key => key === type);
+
+    if (!objKey) {
+      logger.warn(
+        `#### Nao achou o type 152: ${type} ${JSON.stringify(msg.message)}`
+      );
+      Sentry.setExtra("Mensagem", { BodyMsg: msg.message, msg, type });
+      Sentry.captureException(
+        new Error("Novo Tipo de Mensagem em getTypeMessage")
+      );
+    }
+    return types[type];
+  } catch (error) {
+    Sentry.setExtra("Error getTypeMessage", { msg, BodyMsg: msg.message });
+    Sentry.captureException(error);
+    console.log(error);
+  }
+};
+
+const msgAdMetaPreview = (image, title, body, sourceUrl, messageUser) => {
+  const b64 = toBase64Safe(image);
+  const parts = [
+    b64 ? `data:image/png;base64, ${b64}` : null,
+    sourceUrl || null,
+    title || null,
+    body || null,
+    messageUser || null
+  ].filter(Boolean);
+
+  if (!parts.length) return null;
+  return parts.join(" | ");
+};
+
+export const getQuotedMessage = (msg: proto.IWebMessageInfo) => {
+  const body = extractMessageContent(msg.message)[
+    Object.keys(msg?.message).values().next().value
+  ];
+
+  if (!body?.contextInfo?.quotedMessage) return;
+  const quoted = extractMessageContent(
+    body?.contextInfo?.quotedMessage[
+      Object.keys(body?.contextInfo?.quotedMessage).values().next().value
+    ]
+  );
+
+  return quoted;
+};
+
+export const getQuotedMessageId = (msg: proto.IWebMessageInfo) => {
+  const body = extractMessageContent(msg.message)[
+    Object.keys(msg?.message).values().next().value
+  ];
+  let reaction = msg?.message?.reactionMessage
+    ? msg?.message?.reactionMessage?.key?.id
+    : "";
+
+  const contextInfo = body?.contextInfo || (body as any)?.extendedTextMessage?.contextInfo || (body as any)?.imageMessage?.contextInfo || (body as any)?.videoMessage?.contextInfo;
+  console.log(`[DEBUG] getQuotedMessageId: stanzaId=${contextInfo?.stanzaId}, reaction=${reaction}`);
+  return reaction ? reaction : contextInfo?.stanzaId;
+};
+
+const getMeSocket = (wbot: Session): IMe => {
+  return {
+    id: jidNormalizedUser((wbot as WASocket).user.id),
+    name: (wbot as WASocket).user.name
+  };
+};
+
+// Otimizado para v7.0.0-rc.3 com cache e addressing_mode detection
+const getSenderMessage = (
+  msg: proto.IWebMessageInfo,
+  wbot: Session
+): string => {
+  const me = getMeSocket(wbot);
+  if (msg.key.fromMe) return me.id;
+  
+  let senderId: any = msg.participant || msg.key.participant || msg.key.remoteJid || undefined;
+  
+  if (!senderId) return undefined;
+  
+  const cacheKey = `sender_${senderId}_${msg.key.id}`;
+  const cached = addressingModeCache.get(cacheKey) as string;
+  if (cached) return cached;
+  
+  let resolvedSender = senderId;
+  
+  // Otimizado para LIDs - usar remoteJidAlt como prioridade
+  if (typeof senderId === "string" && senderId.endsWith("@lid")) {
+    if ((msg.key as any)?.remoteJidAlt) {
+      resolvedSender = (msg.key as any).remoteJidAlt;
+      console.log(`👤 SENDER RESOLVIDO VIA remoteJidAlt: ${resolvedSender}`);
+    } else if ((msg.key as any)?.senderPn) {
+      resolvedSender = (msg.key as any).senderPn + (senderId.includes("@g.us") ? "@g.us" : "@s.whatsapp.net");
+      console.log(`👤 SENDER RESOLVIDO VIA senderPn: ${resolvedSender}`);
+    } else {
+      console.log(`⚠️ SENDER @LID SEM remoteJidAlt OU senderPn: ${senderId}`);
+    }
+  }
+  
+  const result = resolvedSender && jidNormalizedUser(resolvedSender);
+  
+  // Cache do resultado
+  if (result) {
+    addressingModeCache.set(cacheKey, result);
+  }
+  
+  return result;
+};
+
+// Otimizado para v7.0.0-rc.3 com cache e phoneNumber attributes
+const getContactMessage = async (msg: proto.IWebMessageInfo, wbot: Session) => {
+  const isGroup = msg.key.remoteJid?.includes("@g.us");
+  let contactId = resolveRemoteJid(msg, { isGroup } as any); // <- NORMALIZA AQUI
+
+  // Em alguns CTWA, o primeiro evento chega como @lid sem remoteJidAlt.
+  // Sempre que possível, converte para número real para evitar duplicação de contato/ticket.
+  if (!isGroup && typeof contactId === "string" && contactId.endsWith("@lid")) {
+    const realNumber = extractRealWhatsAppNumber(msg);
+    if (realNumber && realNumber.length >= 8) {
+      contactId = `${realNumber}@s.whatsapp.net`;
+    }
+  }
+
+  const cacheKey = `contact_${contactId}_${msg.key.id}`;
+  const cached = addressingModeCache.get(cacheKey) as {id: string; name: string};
+  if (cached) return cached;
+
+  const rawNumber = contactId.replace(/\D/g, "");
+
+  const result = isGroup
+    ? {
+        id: getSenderMessage(msg, wbot), // <- sender já normalizado
+        name: msg.pushName
+      }
+    : {
+        id: contactId,
+        name: msg.key.fromMe ? rawNumber : msg.pushName
+      };
+
+  addressingModeCache.set(cacheKey, result);
+  return result;
+};
+
+function findCaption(obj) {
+  if (typeof obj !== "object" || obj === null) {
+    return null;
+  }
+
+  for (const key in obj) {
+    if (key === "caption" || key === "text" || key === "conversation") {
+      return obj[key];
+    }
+
+    const result = findCaption(obj[key]);
+    if (result) {
+      return result;
+    }
+  }
+
+  return null;
+}
+
+// const downloadMedia = async (msg: proto.IWebMessageInfo, companyId: number, whatsappId: number) => {
+//   const mineType =
+//     msg.message?.imageMessage ||
+//     msg.message?.audioMessage ||
+//     msg.message?.videoMessage ||
+//     msg.message?.stickerMessage ||
+//     msg.message?.documentMessage ||
+//     msg.message?.documentWithCaptionMessage?.message?.documentMessage ||
+//     // msg.message?.extendedTextMessage?.contextInfo?.quotedMessage?.imageMessage ||
+//     // msg.message?.extendedTextMessage?.contextInfo?.quotedMessage?.videoMessage ||
+//     // msg.message?.extendedTextMessage?.contextInfo?.quotedMessage?.audioMessage ||
+//     msg.message?.ephemeralMessage?.message?.audioMessage ||
+//     msg.message?.ephemeralMessage?.message?.documentMessage ||
+//     msg.message?.ephemeralMessage?.message?.videoMessage ||
+//     msg.message?.ephemeralMessage?.message?.stickerMessage ||
+//     msg.message?.ephemeralMessage?.message?.imageMessage ||
+//     msg.message?.viewOnceMessage?.message?.imageMessage ||
+//     msg.message?.viewOnceMessage?.message?.videoMessage ||
+//     msg.message?.ephemeralMessage?.message?.viewOnceMessage?.message?.imageMessage ||
+//     msg.message?.ephemeralMessage?.message?.viewOnceMessage?.message?.videoMessage ||
+//     msg.message?.ephemeralMessage?.message?.viewOnceMessage?.message?.audioMessage ||
+//     msg.message?.ephemeralMessage?.message?.viewOnceMessage?.message?.documentMessage ||
+//     msg.message?.templateMessage?.hydratedTemplate?.imageMessage ||
+//     msg.message?.templateMessage?.hydratedTemplate?.documentMessage ||
+//     msg.message?.templateMessage?.hydratedTemplate?.videoMessage ||
+//     msg.message?.templateMessage?.hydratedFourRowTemplate?.imageMessage ||
+//     msg.message?.templateMessage?.hydratedFourRowTemplate?.documentMessage ||
+//     msg.message?.templateMessage?.hydratedFourRowTemplate?.videoMessage ||
+//     msg.message?.templateMessage?.fourRowTemplate?.imageMessage ||
+//     msg.message?.templateMessage?.fourRowTemplate?.documentMessage ||
+//     msg.message?.templateMessage?.fourRowTemplate?.videoMessage ||
+//     msg.message?.interactiveMessage?.header?.imageMessage ||
+//     msg.message?.interactiveMessage?.header?.documentMessage ||
+//     msg.message?.interactiveMessage?.header?.videoMessage;
+
+//   // eslint-disable-next-line no-nested-ternary
+//   const messageType = msg.message?.documentMessage
+//     ? "document"
+//     : mineType.mimetype.split("/")[0].replace("application", "document")
+//       ? (mineType.mimetype
+//         .split("/")[0]
+//         .replace("application", "document") as MediaType)
+//       : (mineType.mimetype.split("/")[0] as MediaType);
+
+//   let stream: Transform;
+//   let contDownload = 0;
+
+//   while (contDownload < 10 && !stream) {
+//     try {
+//       const { mediaKey, directPath, url } =
+//         msg.message?.imageMessage ||
+//         msg.message?.audioMessage ||
+//         msg.message?.videoMessage ||
+//         msg.message?.stickerMessage ||
+//         msg.message?.documentMessage ||
+//         msg.message?.documentWithCaptionMessage?.message?.documentMessage ||
+//         msg.message?.ephemeralMessage?.message?.audioMessage ||
+//         msg.message?.ephemeralMessage?.message?.documentMessage ||
+//         msg.message?.ephemeralMessage?.message?.videoMessage ||
+//         msg.message?.ephemeralMessage?.message?.stickerMessage ||
+//         msg.message?.ephemeralMessage?.message?.imageMessage ||
+//         msg.message?.viewOnceMessage?.message?.imageMessage ||
+//         msg.message?.viewOnceMessage?.message?.videoMessage ||
+//         msg.message?.ephemeralMessage?.message?.viewOnceMessage?.message?.imageMessage ||
+//         msg.message?.ephemeralMessage?.message?.viewOnceMessage?.message?.videoMessage ||
+//         msg.message?.ephemeralMessage?.message?.viewOnceMessage?.message?.audioMessage ||
+//         msg.message?.ephemeralMessage?.message?.viewOnceMessage?.message?.documentMessage ||
+//         msg.message?.templateMessage?.hydratedTemplate?.imageMessage ||
+//         msg.message?.templateMessage?.hydratedTemplate?.documentMessage ||
+//         msg.message?.templateMessage?.hydratedTemplate?.videoMessage ||
+//         msg.message?.templateMessage?.hydratedFourRowTemplate?.imageMessage ||
+//         msg.message?.templateMessage?.hydratedFourRowTemplate?.documentMessage ||
+//         msg.message?.templateMessage?.hydratedFourRowTemplate?.videoMessage ||
+//         msg.message?.templateMessage?.fourRowTemplate?.imageMessage ||
+//         msg.message?.templateMessage?.fourRowTemplate?.documentMessage ||
+//         msg.message?.templateMessage?.fourRowTemplate?.videoMessage ||
+//         msg.message?.interactiveMessage?.header?.imageMessage ||
+//         msg.message?.interactiveMessage?.header?.documentMessage ||
+//         msg.message?.interactiveMessage?.header?.videoMessage ||
+//         { mediakey: undefined, directPath: undefined, url: undefined };
+//       // eslint-disable-next-line no-await-in-loop
+//       stream = await downloadContentFromMessage(
+//         { mediaKey, directPath, url: directPath ? "" : url },
+//         messageType
+//       );
+
+//     } catch (error) {
+//       contDownload += 1;
+//       // eslint-disable-next-line no-await-in-loop, no-loop-func
+//       await new Promise(resolve => { setTimeout(resolve, 1000 * contDownload * 2) }
+//       );
+
+//       logger.warn(
+//         `>>>> erro ${contDownload} de baixar o arquivo ${msg?.key.id} companie ${companyId} conexão ${whatsappId}`
+//       );
+
+//       if (contDownload === 10) {
+//         logger.warn(
+//           `>>>> erro ao baixar o arquivo ${JSON.stringify(msg)}`
+//         );
+//       }
+//     }
+//   }
+
+//   let buffer = Buffer.from([]);
+//   try {
+//     // eslint-disable-next-line no-restricted-syntax
+//     for await (const chunk of stream) {
+//       buffer = Buffer.concat([buffer, chunk]);
+//     }
+//   } catch (error) {
+//     return { data: "error", mimetype: "", filename: "" };
+//   }
+
+//   if (!buffer) {
+//     Sentry.setExtra("ERR_WAPP_DOWNLOAD_MEDIA", { msg });
+//     Sentry.captureException(new Error("ERR_WAPP_DOWNLOAD_MEDIA"));
+//     throw new Error("ERR_WAPP_DOWNLOAD_MEDIA");
+//   }
+//   let filename = msg.message?.documentMessage?.fileName || "";
+
+//   if (!filename) {
+//     const ext = mineType.mimetype.split("/")[1].split(";")[0];
+//     filename = `${new Date().getTime()}.${ext}`;
+//   }
+//   const media = {
+//     data: buffer,
+//     mimetype: mineType.mimetype,
+//     filename
+//   };
+//   return media;
+// };
+
+const getUnpackedMessage = (msg: proto.IWebMessageInfo) => {
+  return (
+    msg.message?.documentWithCaptionMessage?.message ||
+    msg.message?.extendedTextMessage?.contextInfo?.quotedMessage ||
+    msg.message?.ephemeralMessage?.message ||
+    msg.message?.viewOnceMessage?.message ||
+    msg.message?.viewOnceMessageV2?.message ||
+    msg.message?.ephemeralMessage?.message ||
+    msg.message?.templateMessage?.hydratedTemplate ||
+    msg.message?.templateMessage?.hydratedFourRowTemplate ||
+    msg.message?.templateMessage?.fourRowTemplate ||
+    msg.message?.interactiveMessage?.header ||
+    msg.message?.highlyStructuredMessage?.hydratedHsm?.hydratedTemplate ||
+    msg.message
+  )
+}
+const getMessageMedia = (message: proto.IMessage) => {
+  return (
+    message?.imageMessage ||
+    message?.audioMessage ||
+    message?.videoMessage ||
+    message?.stickerMessage ||
+    message?.documentMessage || null
+  );
+}
+const downloadMedia = async (msg: proto.IWebMessageInfo, isImported: Date = null, wbot: Session, ticket: Ticket) => {
+  const unpackedMessage = getUnpackedMessage(msg);
+  const message = getMessageMedia(unpackedMessage);
+  if (!message) {
+    return null;
+  }
+  const fileLimit = parseInt(await CheckSettings1("downloadLimit", "9999"), 10);
+  if (wbot && message?.fileLength && +message.fileLength > fileLimit * 1024 * 1024) {
+    throw new Error("ERR_FILESIZE_OVER_LIMIT");
+  }
+
+  if (msg.message?.stickerMessage) {
+    const urlAnt = "https://web.whatsapp.net";
+    const directPath = msg.message?.stickerMessage?.directPath;
+    const newUrl = "https://mmg.whatsapp.net";
+    const final = newUrl + directPath;
+    if (msg.message?.stickerMessage?.url?.includes(urlAnt)) {
+      msg.message.stickerMessage.url = msg.message?.stickerMessage.url.replace(
+        urlAnt,
+        final
+      );
+    }
+  }
+
+  let buffer;
+  try {
+    buffer = await downloadMediaMessage(
+      msg as WAMessage,
+      "buffer",
+      {},
+      {
+        logger,
+        reuploadRequest: wbot.updateMediaMessage
+      }
+    );
+  } catch (err) {
+    if (isImported) {
+      console.log(
+        "Falha ao fazer o download de uma mensagem importada, provavelmente a mensagem já não esta mais disponível"
+      );
+    } else {
+      console.error("Erro ao baixar mídia:", err);
+    }
+  }
+
+  let filename = msg.message?.documentMessage?.fileName || "";
+
+  const mineType =
+    msg.message?.imageMessage ||
+    msg.message?.audioMessage ||
+    msg.message?.videoMessage ||
+    msg.message?.stickerMessage ||
+    msg.message?.ephemeralMessage?.message?.stickerMessage ||
+    msg.message?.documentMessage ||
+    msg.message?.documentWithCaptionMessage?.message?.documentMessage ||
+    msg.message?.ephemeralMessage?.message?.audioMessage ||
+    msg.message?.ephemeralMessage?.message?.documentMessage ||
+    msg.message?.ephemeralMessage?.message?.videoMessage ||
+    msg.message?.ephemeralMessage?.message?.imageMessage ||
+    msg.message?.viewOnceMessage?.message?.imageMessage ||
+    msg.message?.viewOnceMessage?.message?.videoMessage ||
+    msg.message?.ephemeralMessage?.message?.viewOnceMessage?.message
+      ?.imageMessage ||
+    msg.message?.ephemeralMessage?.message?.viewOnceMessage?.message
+      ?.videoMessage ||
+    msg.message?.ephemeralMessage?.message?.viewOnceMessage?.message
+      ?.audioMessage ||
+    msg.message?.ephemeralMessage?.message?.viewOnceMessage?.message
+      ?.documentMessage ||
+    msg.message?.templateMessage?.hydratedTemplate?.imageMessage ||
+    msg.message?.templateMessage?.hydratedTemplate?.documentMessage ||
+    msg.message?.templateMessage?.hydratedTemplate?.videoMessage ||
+    msg.message?.templateMessage?.hydratedFourRowTemplate?.imageMessage ||
+    msg.message?.templateMessage?.hydratedFourRowTemplate?.documentMessage ||
+    msg.message?.templateMessage?.hydratedFourRowTemplate?.videoMessage ||
+    msg.message?.templateMessage?.fourRowTemplate?.imageMessage ||
+    msg.message?.templateMessage?.fourRowTemplate?.documentMessage ||
+    msg.message?.templateMessage?.fourRowTemplate?.videoMessage ||
+    msg.message?.interactiveMessage?.header?.imageMessage ||
+    msg.message?.interactiveMessage?.header?.documentMessage ||
+    msg.message?.interactiveMessage?.header?.videoMessage;
+
+  if (!filename) {
+    const ext = mineType.mimetype.split("/")[1].split(";")[0];
+    filename = `${new Date().getTime()}.${ext}`;
+  } else {
+    filename = `${new Date().getTime()}_${filename}`;
+  }
+
+  const media = {
+    data: buffer,
+    mimetype: mineType.mimetype,
+    filename
+  };
+
+  return media;
+};
+
+const verifyContact = async (
+  msgContact: IMe,
+  wbot: Session,
+  companyId: number | string
+): Promise<any> => {
+
+  let profilePicUrl: string = "";
+  // try {
+  //   profilePicUrl = await wbot.profilePictureUrl(msgContact.id, "image");
+  // } catch (e) {
+  //   Sentry.captureException(e);
+  //   profilePicUrl = `${process.env.FRONTEND_URL}/nopicture.png`;
+  // }
+
+  // [LID/JID] extrai ids a partir do msgContact.id
+  const { lid, jid } = parseLidJid(msgContact?.id);
+
+  const contactData = {
+    name: msgContact.name || msgContact.id.replace(/\D/g, ""),
+    number: msgContact.id.replace(/\D/g, ""),
+    profilePicUrl,
+    isGroup: msgContact.id.includes("g.us"),
+    companyId,
+    remoteJid: msgContact.id,
+    whatsappId: wbot.id,
+    wbot,
+    // [LID/JID] novos campos
+    lid,
+    jid
+  };
+
+  if (contactData.isGroup) {
+    contactData.number = msgContact.id.replace("@g.us", "");
+  }
+
+  const contact = await CreateOrUpdateContactService(contactData);
+
+  return contact;
+};
+
+const verifyQuotedMessage = async (
+  msg: proto.IWebMessageInfo
+): Promise<any> => {
+
+  if (!msg) return null;
+  const quoted = getQuotedMessageId(msg);
+
+  if (!quoted) return null;
+
+  const { data: quotedMsg, error } = await supabase
+    .from("messages")
+    .select("*")
+    .eq("message_id", quoted)
+    .maybeSingle();
+
+  if (error || !quotedMsg) return null;
+
+  return {
+    ...quotedMsg,
+    id: quotedMsg.id,
+    wid: quotedMsg.message_id
+  };
+};
+
+export const verifyMediaMessage = async (
+  msg: proto.IWebMessageInfo,
+  ticket: Ticket,
+  contact: Contact,
+  ticketTraking: TicketTraking,
+  isForwarded: boolean = false,
+  isPrivate: boolean = false,
+  wbot: Session
+): Promise<Message> => {
+  console.log(`[DEBUG] verifyMediaMessage called: id=${msg.key.id}, fromMe=${msg.key.fromMe}, ticketId=${ticket.id}, companyId=${ticket.companyId}`);
+  const io = getIO();
+  const quotedMsg = await verifyQuotedMessage(msg);
+  const companyId = ticket.companyId;
+
+  try {
+    const media = await downloadMedia(msg, ticket?.imported, wbot, ticket);
+
+    if (!media && ticket.imported) {
+      const body =
+        "*System:* \nFalha no download da mídia verifique no dispositivo";
+      const messageData = {
+        //mensagem de texto
+        wid: msg.key.id,
+        ticketId: ticket.id,
+        contactId: msg.key.fromMe ? undefined : ticket.contactId,
+        body,
+        reactionMessage: msg.message?.reactionMessage,
+        fromMe: msg.key.fromMe,
+        mediaType: getTypeMessage(msg),
+        read: msg.key.fromMe,
+        quotedMsgId: quotedMsg?.id || msg.message?.reactionMessage?.key?.id,
+        ack: 1, // inicial; promoção vem só por receipt
+        companyId: companyId,
+        remoteJid: resolveRemoteJid(msg, ticket)
+      };
+      return CreateMessageService({ messageData, companyId: companyId });
+    }
+
+    if (!media) {
+      throw new Error("ERR_WAPP_DOWNLOAD_MEDIA");
+    }
+
+    //   // name = tudo antes do ultimo .
+    //   const name = media.filename.split(".").slice(0, -1).join(".").replace(/\s/g, '_').normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+
+    //   media.filename = `${name.trim()}_${new Date().getTime()}.${ext}`;
+    // }
+    if (!media.filename) {
+      const ext = media.mimetype.split("/")[1].split(";")[0];
+      media.filename = `${new Date().getTime()}.${ext}`;
+    } else {
+      // ext = tudo depois do ultimo .
+      const ext = media.filename.split(".").pop();
+      // name = tudo antes do ultimo .
+      const name = media.filename
+        .split(".")
+        .slice(0, -1)
+        .join(".")
+        .replace(/\s/g, "_")
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "");
+      media.filename = `${name.trim()}_${new Date().getTime()}.${ext}`;
+    }
+
+    try {
+      const folder = path.resolve(
+        __dirname,
+        "..",
+        "..",
+        "..",
+        "public",
+        `company${companyId}`
+      );
+
+      // const folder = `public/company${companyId}`; // Correção adicionada por Altemir 16-08-2023
+      if (!fs.existsSync(folder)) {
+        fs.mkdirSync(folder, { recursive: true }); // Correção adicionada por Altemir 16-08-2023
+        fs.chmodSync(folder, 0o777);
+      }
+
+      if (!media.data) {
+        console.error("Erro: media.data está indefinido. Falha no download da mídia.");
+        return;
+      }
+
+      await writeFile(
+        join(folder, media.filename),
+        media.data.toString("base64"),
+        "base64"
+      ) // Correção adicionada por Altemir 16-08-2023
+        .then(() => {
+          // console.log("Arquivo salvo com sucesso!");
+          if (media.mimetype.includes("audio")) {
+            console.log(media.mimetype);
+            const inputFile = path.join(folder, media.filename);
+            let outputFile: string;
+
+            if (inputFile.endsWith(".mpeg")) {
+              outputFile = inputFile.replace(".mpeg", ".mp3");
+            } else if (inputFile.endsWith(".ogg")) {
+              outputFile = inputFile.replace(".ogg", ".mp3");
+            } else {
+              // Trate outros formatos de arquivo conforme necessário
+              //console.error("Formato de arquivo não suportado:", inputFile);
+              return;
+            }
+
+            return new Promise<void>((resolve, reject) => {
+              ffmpeg(inputFile)
+                .toFormat("mp3")
+                .save(outputFile)
+                .on("end", () => {
+                  resolve();
+                })
+                .on("error", (err: any) => {
+                  reject(err);
+                });
+            });
+          }
+        });
+      // .then(() => {
+      //   //console.log("Conversão concluída!");
+      //   // Aqui você pode fazer o que desejar com o arquivo MP3 convertido.
+      // })
+    } catch (err) {
+      Sentry.setExtra("Erro media", {
+        companyId: companyId,
+        ticket,
+        contact,
+        media,
+        quotedMsg
+      });
+      Sentry.captureException(err);
+      logger.error(err);
+      console.log(msg);
+    }
+
+    const body = getBodyMessage(msg);
+
+    const messageData = {
+      wid: msg.key.id,
+      ticketId: ticket.id,
+      contactId: msg.key.fromMe ? undefined : contact.id,
+      body: body || media.filename,
+      fromMe: msg.key.fromMe,
+      read: msg.key.fromMe,
+      mediaUrl: media.filename,
+      mediaType: media.mimetype.split("/")[0],
+      quotedMsgId: quotedMsg?.id,
+      ack: 1,
+    remoteJid: resolveRemoteJid(msg, ticket),
+      participant: msg.key.participant,
+      dataJson: JSON.stringify(msg),
+      ticketTrakingId: ticketTraking?.id,
+      createdAt: new Date(
+        Math.floor(getTimestampMessage(msg.messageTimestamp) * 1000)
+      ).toISOString(),
+      ticketImported: ticket.imported,
+      isForwarded,
+      isPrivate
+    };
+
+    await UpdateTicketService({
+      ticketData: { lastMessage: body || media.filename },
+      ticketId: ticket.id,
+      companyId
+    });
+
+    const newMessage = await CreateMessageService({
+      messageData,
+      companyId: companyId
+    });
+
+    if (!msg.key.fromMe && ticket.status === "closed") {
+      const updatedTicket = await ShowTicketService(ticket.id, companyId);
+      ticket = updatedTicket;
+
+      io.of(String(companyId))
+        // .to("closed")
+        .emit(`company-${companyId}-ticket`, {
+          action: "delete",
+          ticket,
+          ticketId: ticket.id
+        });
+      // console.log("emitiu socket 902", ticket.id)
+      io.of(String(companyId))
+        // .to(ticket.status)
+        //   .to(ticket.id.toString())
+        .emit(`company-${companyId}-ticket`, {
+          action: "update",
+          ticket,
+          ticketId: ticket.id
+        });
+    }
+
+    return newMessage;
+  } catch (error) {
+    console.log(error);
+    logger.warn("Erro ao baixar media: ", JSON.stringify(msg));
+  }
+};
+
+export const verifyMessage = async (
+  msg: proto.IWebMessageInfo,
+  ticket: Ticket,
+  contact: Contact,
+  ticketTraking?: TicketTraking,
+  isPrivate?: boolean,
+  isForwarded: boolean = false
+) => {
+  console.log(`[DEBUG] verifyMessage called: id=${msg.key.id}, fromMe=${msg.key.fromMe}, ticketId=${ticket.id}, companyId=${ticket.companyId}`);
+  const io = getIO();
+  const quotedMsg = await verifyQuotedMessage(msg);
+  const body = getBodyMessage(msg);
+  const companyId = ticket.companyId;
+
+  const messageData = {
+    wid: msg.key.id,
+    ticketId: ticket.id,
+    contactId: msg.key.fromMe ? undefined : contact.id,
+    body,
+    fromMe: msg.key.fromMe,
+    mediaType: getTypeMessage(msg),
+    read: msg.key.fromMe,
+    quotedMsgId: quotedMsg?.id,
+    ack: 1,
+    remoteJid: resolveRemoteJid(msg, ticket),
+    participant: msg.key.participant,
+    dataJson: JSON.stringify(msg),
+    ticketTrakingId: ticketTraking?.id,
+    isPrivate,
+    createdAt: new Date(
+      Math.floor(getTimestampMessage(msg.messageTimestamp) * 1000)
+    ).toISOString(),
+    ticketImported: ticket.imported,
+    isForwarded
+  };
+
+  await UpdateTicketService({
+    ticketData: { lastMessage: body },
+    ticketId: ticket.id,
+    companyId
+  });
+
+  await CreateMessageService({ messageData, companyId: companyId });
+
+  if (!msg.key.fromMe && ticket.status === "closed") {
+    console.log("===== CHANGE =====");
+    const updatedTicket = await ShowTicketService(ticket.id, companyId);
+    ticket = updatedTicket;
+
+    // io.to("closed").emit(`company-${companyId}-ticket`, {
+    //   action: "delete",
+    //   ticket,
+    //   ticketId: ticket.id
+    // });
+
+    if (!ticket.imported) {
+      io.of(String(companyId))
+        // .to(ticket.status)
+        // .to(ticket.id.toString())
+        .emit(`company-${companyId}-ticket`, {
+          action: "update",
+          ticket,
+          ticketId: ticket.id
+        });
+    }
+  }
+};
+
+const isValidMsg = (msg: proto.IWebMessageInfo): boolean => {
+  if (msg.key.remoteJid === "status@broadcast") return false;
+  try {
+    const msgType = getTypeMessage(msg);
+    if (!msgType) {
+      return;
+    }
+
+    const ifType =
+      msgType === "conversation" ||
+      msgType === "extendedTextMessage" ||
+      msgType === "audioMessage" ||
+      msgType === "videoMessage" ||
+      msgType === "ptvMessage" ||
+      msgType === "imageMessage" ||
+      msgType === "documentMessage" ||
+      msgType === "stickerMessage" ||
+      msgType === "buttonsResponseMessage" ||
+      msgType === "buttonsMessage" ||
+      msgType === "messageContextInfo" ||
+      msgType === "locationMessage" ||
+      msgType === "liveLocationMessage" ||
+      msgType === "contactMessage" ||
+      msgType === "voiceMessage" ||
+      msgType === "mediaMessage" ||
+      msgType === "contactsArrayMessage" ||
+      msgType === "reactionMessage" ||
+      msgType === "ephemeralMessage" ||
+      msgType === "protocolMessage" ||
+      msgType === "listResponseMessage" ||
+      msgType === "listMessage" ||
+      msgType === "interactiveMessage" ||
+      msgType === "pollCreationMessageV3" ||
+      msgType === "viewOnceMessage" ||
+      msgType === "documentWithCaptionMessage" ||
+      msgType === "viewOnceMessageV2" ||
+      msgType === "editedMessage" ||
+      msgType === "advertisingMessage" ||
+      msgType === "highlyStructuredMessage" ||
+      msgType === "eventMessage" ||
+      msgType === "adMetaPreview"; // Adicionado para tratar mensagens de anúncios
+
+    if (!ifType) {
+      logger.warn(`#### Nao achou o type em isValidMsg: ${msgType}
+${JSON.stringify(msg?.message)}`);
+      Sentry.setExtra("Mensagem", { BodyMsg: msg.message, msg, msgType });
+      Sentry.captureException(new Error("Novo Tipo de Mensagem em isValidMsg"));
+    }
+
+    return !!ifType;
+  } catch (error) {
+    Sentry.setExtra("Error isValidMsg", { msg });
+    Sentry.captureException(error);
+  }
+};
+
+const sendDialogflowAwswer = async (
+  wbot: Session,
+  ticket: Ticket,
+  msg: WAMessage,
+  contact: Contact,
+  inputAudio: string | undefined,
+  companyId: number | string,
+  queueIntegration: QueueIntegrations
+) => {
+  const session = await createDialogflowSessionWithModel(queueIntegration);
+
+  if (session === undefined) {
+    return;
+  }
+
+  wbot.presenceSubscribe(contact.remoteJid);
+  await delay(500);
+
+  let dialogFlowReply = await queryDialogFlow(
+    session,
+    queueIntegration.projectName,
+    contact.remoteJid,
+    getBodyMessage(msg),
+    queueIntegration.language,
+    inputAudio
+  );
+
+  if (!dialogFlowReply) {
+    wbot.sendPresenceUpdate("composing", contact.remoteJid);
+
+    const bodyDuvida = formatBody(
+      `\u200e *${queueIntegration?.name}:* Não consegui entender sua dúvida.`
+    );
+
+    await delay(1000);
+
+    await wbot.sendPresenceUpdate("paused", contact.remoteJid);
+
+    const sentMessage = await wbot.sendMessage(`${contact.number}@c.us`, {
+      text: bodyDuvida
+    });
+
+    await verifyMessage(sentMessage, ticket, contact);
+    return;
+  }
+
+  if (dialogFlowReply.endConversation) {
+    await supabase.from("tickets").update({
+      contact_id: ticket.contact.id,
+      use_integration: false
+    , updated_at: new Date().toISOString()}).eq("id", ticket.id);
+  }
+
+  const image = dialogFlowReply.parameters.image?.stringValue ?? undefined;
+
+  const react = dialogFlowReply.parameters.react?.stringValue ?? undefined;
+
+  const audio = dialogFlowReply.encodedAudio.toString("base64") ?? undefined;
+
+  wbot.sendPresenceUpdate("composing", contact.remoteJid);
+  await delay(500);
+
+  let lastMessage;
+
+  for (let message of dialogFlowReply.responses) {
+    lastMessage = message.text.text[0] ? message.text.text[0] : lastMessage;
+  }
+  for (let message of dialogFlowReply.responses) {
+    if (message.text) {
+      await sendDelayedMessages(
+        wbot,
+        ticket,
+        contact,
+        message.text.text[0],
+        lastMessage,
+        audio,
+        queueIntegration
+      );
+    }
+  }
+};
+
+async function sendDelayedMessages(
+  wbot: Session,
+  ticket: Ticket,
+  contact: Contact,
+  message: string,
+  lastMessage: string,
+  audio: string | undefined,
+  queueIntegration: QueueIntegrations
+) {
+  const companyId = ticket.companyId;
+  // console.log("GETTING WHATSAPP SEND DELAYED MESSAGES", ticket.whatsappId, wbot.id)
+  const whatsapp = await ShowWhatsAppService(wbot.id!, companyId);
+  const farewellMessage = whatsapp.farewellMessage.replace(/[_*]/g, "");
+
+  // if (react) {
+  //   const test =
+  //     /(\u00a9|\u00ae|[\u2000-\u3300]|\ud83c[\ud000-\udfff]|\ud83d[\ud000-\udfff]|\ud83e[\ud000-\udfff])/g.test(
+  //       react
+  //     );
+  //   if (test) {
+  //     msg.react(react);
+  //     await delay(1000);
+  //   }
+  // }
+  const sentMessage = await wbot.sendMessage(`${contact.number}@c.us`, {
+    text: `\u200e *${queueIntegration?.name}:* ` + message
+  });
+
+  await verifyMessage(sentMessage, ticket, contact);
+  if (message != lastMessage) {
+    await delay(500);
+    wbot.sendPresenceUpdate("composing", contact.remoteJid);
+  } else if (audio) {
+    wbot.sendPresenceUpdate("recording", contact.remoteJid);
+    await delay(500);
+
+    // if (audio && message === lastMessage) {
+    //   const newMedia = new MessageMedia("audio/ogg", audio);
+
+    //   const sentMessage = await wbot.sendMessage(
+    //     `${contact.number}@c.us`,
+    //     newMedia,
+    //     {
+    //       sendAudioAsVoice: true
+    //     }
+    //   );
+
+    //   await verifyMessage(sentMessage, ticket, contact);
+    // }
+
+    // if (sendImage && message === lastMessage) {
+    //   const newMedia = await MessageMedia.fromUrl(sendImage, {
+    //     unsafeMime: true
+    //   });
+    //   const sentMessage = await wbot.sendMessage(
+    //     `${contact.number}@c.us`,
+    //     newMedia,
+    //     {
+    //       sendAudioAsVoice: true
+    //     }
+    //   );
+
+    //   await verifyMessage(sentMessage, ticket, contact);
+    //   await supabase.from("tickets").update({ last_message: "📷 Foto" , updated_at: new Date().toISOString()}).eq("id", ticket.id);
+    // }
+
+    if (farewellMessage && message.includes(farewellMessage)) {
+      await delay(1000);
+      setTimeout(async () => {
+        await supabase.from("tickets").update({
+          contact_id: ticket.contact.id,
+          use_integration: true
+        , updated_at: new Date().toISOString()}).eq("id", ticket.id);
+        await UpdateTicketService({
+          ticketId: ticket.id,
+          ticketData: { status: "closed" },
+          companyId: companyId
+        });
+      }, 3000);
+    }
+  }
+}
+
+const verifyQueue = async (
+  wbot: Session,
+  msg: proto.IWebMessageInfo,
+  ticket: Ticket,
+  contact: Contact,
+  settings?: any,
+  ticketTraking?: TicketTraking
+) => {
+  const companyId = ticket.companyId;
+
+  console.log("verifyQueue");
+  // console.log("GETTING WHATSAPP VERIFY QUEUE", ticket.whatsappId, wbot.id)
+  const { queues, greetingMessage, maxUseBotQueues, timeUseBotQueues } =
+    await ShowWhatsAppService(wbot.id!, companyId);
+
+  let chatbot = false;
+
+  if (queues.length === 1) {
+    console.log("log... 1186");
+    chatbot = queues[0]?.chatbots.length > 1;
+  }
+
+  const enableQueuePosition = settings.sendQueuePosition === "enabled";
+
+  if (queues.length === 1 && !chatbot) {
+    const sendGreetingMessageOneQueues =
+      settings.sendGreetingMessageOneQueues === "enabled" || false;
+
+    console.log("log... 1195");
+
+    //inicia integração dialogflow/n8n
+    if (!msg.key.fromMe && !ticket.isGroup && queues[0].integrationId) {
+      const integrations = await ShowQueueIntegrationService(
+        queues[0].integrationId,
+        companyId
+      );
+
+      console.log("log... 1206");
+
+      await handleMessageIntegration(
+        msg,
+        wbot,
+        companyId,
+        integrations,
+        ticket,
+        null,
+        null,
+        null,
+        null
+      );
+
+      if (msg.key.fromMe) {
+        console.log("log... 1211");
+
+      await UpdateTicketService({
+        ticketData: {
+          typebotSessionTime: moment().toDate().toISOString(),
+          useIntegration: true,
+          integrationId: integrations.id
+        },
+        ticketId: ticket.id,
+        companyId
+      });
+      }
+
+      // return;
+    }
+
+    if (greetingMessage.length > 1 && sendGreetingMessageOneQueues) {
+      console.log("log... 1226");
+      const body = formatBody(`${greetingMessage}`, ticket);
+
+      if (ticket.whatsapp.greetingMediaAttachment !== null) {
+        const filePath = path.resolve(
+          "public",
+          `company${companyId}`,
+          ticket.whatsapp.greetingMediaAttachment
+        );
+
+        const fileExists = fs.existsSync(filePath);
+
+        if (fileExists) {
+          console.log("log... 1235");
+          const messagePath = ticket.whatsapp.greetingMediaAttachment;
+          const optionsMsg = await getMessageOptions(
+            messagePath,
+            filePath,
+            String(companyId),
+            body
+          );
+          const debouncedSentgreetingMediaAttachment = debounce(
+            async () => {
+              const sentMessage = await wbot.sendMessage(
+                `${ticket.contact.number}@${
+                  ticket.isGroup ? "g.us" : "s.whatsapp.net"
+                }`,
+                { ...optionsMsg }
+              );
+
+              await verifyMediaMessage(
+                sentMessage,
+                ticket,
+                contact,
+                ticketTraking,
+                false,
+                false,
+                wbot
+              );
+            },
+            1000,
+            ticket.id
+          );
+          debouncedSentgreetingMediaAttachment();
+        } else {
+          console.log("log... 1250");
+          await wbot.sendMessage(
+            `${contact.number}@${ticket.isGroup ? "g.us" : "s.whatsapp.net"}`,
+            {
+              text: body
+            }
+          );
+        }
+      } else {
+        console.log("log... 1259");
+        await wbot.sendMessage(
+          `${contact.number}@${ticket.isGroup ? "g.us" : "s.whatsapp.net"}`,
+          {
+            text: body
+          }
+        );
+      }
+    }
+
+    if (!isNil(queues[0].fileListId)) {
+      console.log("log... 1278");
+      try {
+        const publicFolder = path.resolve(
+          __dirname,
+          "..",
+          "..",
+          "..",
+          "public"
+        );
+
+        const files = await ShowFileService(
+          queues[0].fileListId,
+          ticket.companyId
+        );
+
+        const folder = path.resolve(
+          publicFolder,
+          `company${ticket.companyId}`,
+          "fileList",
+          String(files.id)
+        );
+
+        for (const [index, file] of files.options.entries()) {
+          const mediaSrc = {
+            fieldname: "medias",
+            originalname: file.path,
+            encoding: "7bit",
+            mimetype: file.mediaType,
+            filename: file.path,
+            path: path.resolve(folder, file.path)
+          } as Express.Multer.File;
+
+          await SendWhatsAppMedia({
+            media: mediaSrc,
+            ticket,
+            body: file.name,
+            isPrivate: false,
+            isForwarded: false
+          });
+        }
+      } catch (error) {
+        logger.info(error);
+      }
+    }
+
+    if (queues[0].closeTicket) {
+      console.log("log... 1297");
+      await UpdateTicketService({
+        ticketData: {
+          status: "closed",
+          queueId: queues[0].id
+          // sendFarewellMessage: false
+        },
+        ticketId: ticket.id,
+        companyId
+      });
+
+      return;
+    } else {
+      console.log("log... 1310");
+      await UpdateTicketService({
+        ticketData: {
+          queueId: queues[0].id,
+          status: ticket.status === "lgpd" ? "pending" : ticket.status
+        },
+        ticketId: ticket.id,
+        companyId
+      });
+    }
+
+    const { count } = await supabase
+      .from("tickets")
+      .select("*", { count: "exact", head: true })
+      .eq("user_id", null)
+      .eq("status", "pending")
+      .eq("company_id", companyId)
+      .eq("queue_id", queues[0].id)
+      .eq("is_group", false);
+
+    if (enableQueuePosition) {
+      console.log("log... 1329");
+      // Lógica para enviar posição da fila de atendimento
+      const qtd = count.count === 0 ? 1 : count.count;
+      const msgFila = `${settings.sendQueuePositionMessage} *${qtd}*`;
+      // const msgFila = `*Assistente Virtual:*\n{{ms}} *{{name}}*, sua posição na fila de atendimento é: *${qtd}*`;
+      const bodyFila = formatBody(`${msgFila}`, ticket);
+      const debouncedSentMessagePosicao = debounce(
+        async () => {
+          await wbot.sendMessage(
+            `${contact.number}@${ticket.isGroup ? "g.us" : "s.whatsapp.net"}`,
+            {
+              text: bodyFila
+            }
+          );
+        },
+        3000,
+        ticket.id
+      );
+      debouncedSentMessagePosicao();
+    }
+
+    return;
+  }
+
+  // REGRA PARA DESABILITAR O BOT PARA ALGUM CONTATO
+  if (contact.disableBot) {
+    return;
+  }
+
+  let selectedOption = "";
+
+  if (ticket.status !== "lgpd") {
+    console.log("log... 1367");
+    selectedOption =
+      msg?.message?.buttonsResponseMessage?.selectedButtonId ||
+      msg?.message?.listResponseMessage?.singleSelectReply.selectedRowId ||
+      getBodyMessage(msg);
+  } else {
+    if (!isNil(ticket.lgpdAcceptedAt)) {
+      await UpdateTicketService({
+        ticketData: { status: "pending" },
+        ticketId: ticket.id,
+        companyId
+      });
+    }
+
+    const updatedTicket = await ShowTicketService(ticket.id, companyId);
+    ticket = updatedTicket;
+  }
+
+  if (String(selectedOption).toLocaleLowerCase() == "sair") {
+    // Encerra atendimento
+
+    console.log("log... 1384");
+
+    const ticketData = {
+      isBot: false,
+      status: "closed",
+      sendFarewellMessage: true,
+      maxUseBotQueues: 0
+    };
+
+    await UpdateTicketService({ ticketData, ticketId: ticket.id, companyId });
+    // await supabase.from("tickets").update({ queue_option_id: null, chatbot: false, queue_id: null, user_id: null, status: "closed", updated_at: new Date().toISOString()}).eq("id", ticket.id);
+    //await verifyQueue(wbot, msg, ticket, ticket.contact);
+
+    // const complationMessage = ticket.whatsapp?.complationMessage;
+
+    // console.log(complationMessage)
+    // const textMessage = {
+    //   text: formatBody(`\u200e${complationMessage}`, ticket),
+    // };
+
+    // if (!isNil(complationMessage)) {
+    //   const sendMsg = await wbot.sendMessage(
+    //     `${ticket?.contact?.number}@${ticket.isGroup ? "g.us" : "s.whatsapp.net"}`,
+    //     textMessage
+    //   );
+
+    //   await verifyMessage(sendMsg, ticket, ticket.contact);
+    // }
+
+    return;
+  }
+
+  let choosenQueue =
+    chatbot && queues.length === 1
+      ? queues[+selectedOption]
+      : queues[+selectedOption - 1];
+
+  console.log("log... 1419");
+
+  const typeBot = settings?.chatBotType || "text";
+
+  // Serviço p/ escolher consultor aleatório para o ticket, ao selecionar fila.
+  let randomUserId;
+
+  if (choosenQueue) {
+    console.log("log... 1427");
+    try {
+      const userQueue = await ListUserQueueServices(choosenQueue.id);
+
+      if (userQueue.userId > -1) {
+        randomUserId = userQueue.userId;
+      }
+    } catch (error) {
+      console.error(error);
+    }
+  }
+
+  // Ativar ou desativar opção de escolher consultor aleatório.
+  /*   let settings = await CompaniesSettings.findOne({
+      where: {
+        companyId: companyId
+      }
+    }); */
+
+  const botText = async () => {
+    console.log("log... 1449");
+
+    if (choosenQueue || (queues.length === 1 && chatbot)) {
+      console.log("log... 1452");
+      // console.log("entrou no choose", ticket.isOutOfHour, ticketTraking.chatbotAt)
+      if (queues.length === 1) choosenQueue = queues[0];
+      const { data: queue } = await supabase
+        .from("queues")
+        .select("*")
+        .eq("id", choosenQueue.id)
+        .single();
+
+      console.log("log... 1457");
+
+      if (ticket.isOutOfHour === false && ticketTraking.chatbotAt !== null) {
+        console.log("log... 1460");
+        await supabase
+          .from("ticket_trackings")
+          .update({ chatbot_at: null })
+          .eq("id", ticketTraking.id);
+
+        await UpdateTicketService({
+          ticketData: { amountUsedBotQueues: 0 },
+          ticketId: ticket.id,
+          companyId
+        });
+      }
+
+      let currentSchedule;
+
+      if (settings?.scheduleType === "queue") {
+        console.log("log... 1472");
+        currentSchedule = await VerifyCurrentSchedule(companyId, queue.id, 0);
+      }
+
+      if (
+        settings?.scheduleType === "queue" &&
+        ticket.status !== "open" &&
+        !isNil(currentSchedule) &&
+        (ticket.amountUsedBotQueues < maxUseBotQueues ||
+          maxUseBotQueues === 0) &&
+        (!currentSchedule || currentSchedule.inActivity === false) &&
+        (!ticket.isGroup || ticket.whatsapp?.groupAsTicket === "enabled")
+      ) {
+        if (timeUseBotQueues !== "0") {
+          console.log("log... 1483");
+          //Regra para desabilitar o chatbot por x minutos/horas após o primeiro envio
+          //const ticketTraking = await FindOrCreateATicketTrakingService({ ticketId: ticket.id, companyId });
+          let dataLimite = new Date();
+          let Agora = new Date();
+
+          if (ticketTraking.chatbotAt !== null) {
+            console.log("log... 1491");
+            dataLimite.setMinutes(
+              ticketTraking.chatbotAt.getMinutes() + Number(timeUseBotQueues)
+            );
+
+            if (
+              ticketTraking.chatbotAt !== null &&
+              Agora < dataLimite &&
+              timeUseBotQueues !== "0" &&
+              ticket.amountUsedBotQueues !== 0
+            ) {
+              return;
+            }
+          }
+      await supabase.from("ticket_trackings").update({ chatbot_at: null }).eq("id", ticketTraking.id);
+        }
+
+        const outOfHoursMessage = queue.outOfHoursMessage;
+
+        if (outOfHoursMessage !== "") {
+          // console.log("entrei3");
+          const body = formatBody(`${outOfHoursMessage}`, ticket);
+
+          console.log("log... 1509");
+
+          const debouncedSentMessage = debounce(
+            async () => {
+              await wbot.sendMessage(
+                `${ticket.contact.number}@${
+                  ticket.isGroup ? "g.us" : "s.whatsapp.net"
+                }`,
+                {
+                  text: body
+                }
+              );
+            },
+            1000,
+            ticket.id
+          );
+          debouncedSentMessage();
+
+          //atualiza o contador de vezes que enviou o bot e que foi enviado fora de hora
+          // await supabase.from("tickets").update({
+          //   queue_id: queue.id,
+          //   is_out_of_hour: true,
+          //   amount_used_bot_queues: ticket.amountUsedBotQueues + 1
+          // , updated_at: new Date().toISOString()}).eq("id", ticket.id);
+
+          // return;
+        }
+        //atualiza o contador de vezes que enviou o bot e que foi enviado fora de hora
+        await supabase.from("tickets").update({
+          queue_id: queue.id,
+          is_out_of_hour: true,
+          amount_used_bot_queues: ticket.amountUsedBotQueues + 1
+        , updated_at: new Date().toISOString()}).eq("id", ticket.id);
+        return;
+      }
+
+      await UpdateTicketService({
+        ticketData: {
+          // amountUsedBotQueues: 0,
+          queueId: choosenQueue.id
+        },
+        // ticketData: { queueId: queues.length ===1 ? null : choosenQueue.id },
+        ticketId: ticket.id,
+        companyId
+      });
+      // }
+
+      if (choosenQueue.chatbots.length > 0 && !ticket.isGroup) {
+        console.log("log... 1554");
+        let options = "";
+        choosenQueue.chatbots.forEach((chatbot, index) => {
+          options += `*[ ${index + 1} ]* - ${chatbot.name}\n`;
+        });
+
+        const body = formatBody(
+          `\u200e ${choosenQueue.greetingMessage}\n\n${options}\n*[ # ]* Voltar para o menu principal\n*[ Sair ]* Encerrar atendimento`,
+          ticket
+        );
+
+        const sentMessage = await wbot.sendMessage(
+          `${contact.number}@${ticket.isGroup ? "g.us" : "s.whatsapp.net"}`,
+
+          {
+            text: body
+          }
+        );
+
+        await verifyMessage(sentMessage, ticket, contact, ticketTraking);
+
+        if (settings?.settingsUserRandom === "enabled") {
+          console.log("log... 1576");
+          await UpdateTicketService({
+            ticketData: { userId: randomUserId },
+            ticketId: ticket.id,
+            companyId
+          });
+        }
+      }
+
+      if (
+        !choosenQueue.chatbots.length &&
+        choosenQueue.greetingMessage.length !== 0
+      ) {
+        console.log("log... 1586");
+        console.log(choosenQueue.greetingMessage);
+        const body = formatBody(
+          `\u200e${choosenQueue.greetingMessage}`,
+          ticket
+        );
+        const sentMessage = await wbot.sendMessage(
+          `${contact.number}@${ticket.isGroup ? "g.us" : "s.whatsapp.net"}`,
+          {
+            text: body
+          }
+        );
+
+        await verifyMessage(sentMessage, ticket, contact, ticketTraking);
+      }
+
+      if (!isNil(choosenQueue.fileListId)) {
+        try {
+          const publicFolder = path.resolve(
+            __dirname,
+            "..",
+            "..",
+            "..",
+            "public"
+          );
+
+          const files = await ShowFileService(
+            choosenQueue.fileListId,
+            ticket.companyId
+          );
+
+          const folder = path.resolve(
+            publicFolder,
+            `company${ticket.companyId}`,
+            "fileList",
+            String(files.id)
+          );
+
+          for (const [index, file] of files.options.entries()) {
+            const mediaSrc = {
+              fieldname: "medias",
+              originalname: file.path,
+              encoding: "7bit",
+              mimetype: file.mediaType,
+              filename: file.path,
+              path: path.resolve(folder, file.path)
+            } as Express.Multer.File;
+
+            // const debouncedSentMessagePosicao = debounce(
+            //   async () => {
+            const sentMessage = await SendWhatsAppMedia({
+              media: mediaSrc,
+              ticket,
+              body: `\u200e ${file.name}`,
+              isPrivate: false,
+              isForwarded: false
+            });
+
+            await verifyMediaMessage(
+              sentMessage,
+              ticket,
+              ticket.contact,
+              ticketTraking,
+              false,
+              false,
+              wbot
+            );
+            //   },
+            //   2000,
+            //   ticket.id
+            // );
+            // debouncedSentMessagePosicao();
+          }
+        } catch (error) {
+          logger.info(error);
+        }
+      }
+
+      await delay(4000);
+
+      //se fila está parametrizada para encerrar ticket automaticamente
+      if (choosenQueue.closeTicket) {
+        try {
+          await UpdateTicketService({
+            ticketData: {
+              status: "closed",
+              queueId: choosenQueue.id
+              // sendFarewellMessage: false,
+            },
+            ticketId: ticket.id,
+            companyId
+          });
+        } catch (error) {
+          logger.info(error);
+        }
+
+        return;
+      }
+
+      const { count } = await supabase.from("tickets").select("*", { count: "exact", head: true }).is("user_id", null).eq("status", "pending").eq("company_id", companyId).eq("queue_id", choosenQueue.id).eq("whatsapp_id", wbot.id).eq("is_group", false);
+
+      console.log("======== choose queue ========");
+      await CreateLogTicketService({
+        ticketId: ticket.id,
+        type: "queue",
+        queueId: choosenQueue.id
+      });
+
+      if (enableQueuePosition && !choosenQueue.chatbots.length) {
+        // Lógica para enviar posição da fila de atendimento
+        const qtd = count.count === 0 ? 1 : count.count;
+        const msgFila = `${settings.sendQueuePositionMessage} *${qtd}*`;
+        // const msgFila = `*Assistente Virtual:*\n{{ms}} *{{name}}*, sua posição na fila de atendimento é: *${qtd}*`;
+        const bodyFila = formatBody(`${msgFila}`, ticket);
+        const debouncedSentMessagePosicao = debounce(
+          async () => {
+            await wbot.sendMessage(
+              `${contact.number}@${ticket.isGroup ? "g.us" : "s.whatsapp.net"}`,
+              {
+                text: bodyFila
+              }
+            );
+          },
+          3000,
+          ticket.id
+        );
+        debouncedSentMessagePosicao();
+      }
+    } else {
+      if (ticket.isGroup) return;
+
+      if (
+        maxUseBotQueues &&
+        maxUseBotQueues !== 0 &&
+        ticket.amountUsedBotQueues >= maxUseBotQueues
+      ) {
+        // await UpdateTicketService({
+        //   ticketData: { queueId: queues[0].id },
+        //   ticketId: ticket.id
+        // });
+
+        return;
+      }
+
+      if (timeUseBotQueues !== "0") {
+        //Regra para desabilitar o chatbot por x minutos/horas após o primeiro envio
+        //const ticketTraking = await FindOrCreateATicketTrakingService({ ticketId: ticket.id, companyId });
+        let dataLimite = new Date();
+        let Agora = new Date();
+
+        console.log("log... 1749");
+
+        if (ticketTraking.chatbotAt !== null) {
+          dataLimite.setMinutes(
+            ticketTraking.chatbotAt.getMinutes() + Number(timeUseBotQueues)
+          );
+
+          console.log("log... 1754");
+
+          if (
+            ticketTraking.chatbotAt !== null &&
+            Agora < dataLimite &&
+            timeUseBotQueues !== "0" &&
+            ticket.amountUsedBotQueues !== 0
+          ) {
+            return;
+          }
+        }
+        await supabase.from("ticket_trackings").update({
+          chatbot_at: null
+        , updated_at: new Date().toISOString()}).eq("id", ticketTraking.id);
+      }
+
+      // if (wbot.waitForSocketOpen()) {
+      //   console.log("AGUARDANDO")
+      //   console.log(wbot.waitForSocketOpen())
+      // }
+
+      wbot.presenceSubscribe(contact.remoteJid);
+
+      let options = "";
+
+      wbot.sendPresenceUpdate("composing", contact.remoteJid);
+
+      console.log("============= queue menu =============");
+      queues.forEach((queue, index) => {
+        options += `*[ ${index + 1} ]* - ${queue.name}\n`;
+      });
+      options += `\n*[ Sair ]* - Encerrar atendimento`;
+
+      const body = formatBody(`\u200e${greetingMessage}\n\n${options}`, ticket);
+
+      await CreateLogTicketService({
+        ticketId: ticket.id,
+        type: "chatBot"
+      });
+
+      await delay(1000);
+
+      await wbot.sendPresenceUpdate("paused", contact.remoteJid);
+
+      if (ticket.whatsapp.greetingMediaAttachment !== null) {
+        console.log("log... 1799");
+
+        const filePath = path.resolve(
+          "public",
+          `company${companyId}`,
+          ticket.whatsapp.greetingMediaAttachment
+        );
+
+        const fileExists = fs.existsSync(filePath);
+        // console.log(fileExists);
+        if (fileExists) {
+          const messagePath = ticket.whatsapp.greetingMediaAttachment;
+          const optionsMsg = await getMessageOptions(
+            messagePath,
+            filePath,
+            String(companyId),
+            body
+          );
+
+          console.log("log... 1809");
+
+          const debouncedSentgreetingMediaAttachment = debounce(
+            async () => {
+              let sentMessage = await wbot.sendMessage(
+                `${ticket.contact.number}@${
+                  ticket.isGroup ? "g.us" : "s.whatsapp.net"
+                }`,
+                { ...optionsMsg }
+              );
+
+              await verifyMediaMessage(
+                sentMessage,
+                ticket,
+                contact,
+                ticketTraking,
+                false,
+                false,
+                wbot
+              );
+            },
+            1000,
+            ticket.id
+          );
+          debouncedSentgreetingMediaAttachment();
+        } else {
+          console.log("log... 1824");
+          const debouncedSentMessage = debounce(
+            async () => {
+              const sentMessage = await wbot.sendMessage(
+                `${contact.number}@${
+                  ticket.isGroup ? "g.us" : "s.whatsapp.net"
+                }`,
+                {
+                  text: body
+                }
+              );
+
+              await verifyMessage(sentMessage, ticket, contact, ticketTraking);
+            },
+            1000,
+            ticket.id
+          );
+          debouncedSentMessage();
+        }
+
+        console.log("log... 1843");
+
+        await UpdateTicketService({
+          ticketData: {
+            // amountUsedBotQueues: ticket.amountUsedBotQueues + 1
+          },
+          ticketId: ticket.id,
+          companyId
+        });
+
+        return;
+      } else {
+        console.log("log... 1854");
+
+        const debouncedSentMessage = debounce(
+          async () => {
+            const sentMessage = await wbot.sendMessage(
+              `${contact.number}@${ticket.isGroup ? "g.us" : "s.whatsapp.net"}`,
+              {
+                text: body
+              }
+            );
+
+            await verifyMessage(sentMessage, ticket, contact, ticketTraking);
+          },
+          1000,
+          ticket.id
+        );
+
+        await UpdateTicketService({
+          ticketData: {},
+          ticketId: ticket.id,
+          companyId
+        });
+
+        debouncedSentMessage();
+      }
+    }
+  };
+
+  const botList = async () => {
+
+    console.log("log... 1449")
+
+    if (choosenQueue || (queues.length === 1 && chatbot)) {
+      console.log("log... 1452")
+      // console.log("entrou no choose", ticket.isOutOfHour, ticketTraking.chatbotAt)
+      if (queues.length === 1) choosenQueue = queues[0]
+      const queue = await supabase.from("queues").select("*").eq("id", choosenQueue.id).maybeSingle().then(res => res.data ? { ...res.data, outOfHoursMessage: res.data.out_of_hours_message, greetingMessage: res.data.greeting_message } : null)
+
+      console.log("log... 1457")
+
+      if (ticket.isOutOfHour === false && ticketTraking.chatbotAt !== null) {
+        console.log("log... 1460")
+        await supabase.from("ticket_trackings").update({
+          chatbot_at: null
+        , updated_at: new Date().toISOString()}).eq("id", ticketTraking.id);
+        await supabase.from("tickets").update({
+          amount_used_bot_queues: 0
+        , updated_at: new Date().toISOString()}).eq("id", ticket.id);
+      }
+
+      let currentSchedule;
+
+      if (settings?.scheduleType === "queue") {
+        console.log("log... 1472")
+        currentSchedule = await VerifyCurrentSchedule(companyId, queue.id, 0);
+      }
+
+      if (
+        settings?.scheduleType === "queue" && ticket.status !== "open" &&
+        !isNil(currentSchedule) && (ticket.amountUsedBotQueues < maxUseBotQueues || maxUseBotQueues === 0)
+        && (!currentSchedule || currentSchedule.inActivity === false)
+        && (!ticket.isGroup || ticket.whatsapp?.groupAsTicket === "enabled")
+      ) {
+        if (timeUseBotQueues !== "0") {
+          console.log("log... 1483")
+          //Regra para desabilitar o chatbot por x minutos/horas após o primeiro envio
+          //const ticketTraking = await FindOrCreateATicketTrakingService({ ticketId: ticket.id, companyId });
+          let dataLimite = new Date();
+          let Agora = new Date();
+
+
+          if (ticketTraking.chatbotAt !== null) {
+            console.log("log... 1491")
+            dataLimite.setMinutes(ticketTraking.chatbotAt.getMinutes() + (Number(timeUseBotQueues)));
+
+            if (ticketTraking.chatbotAt !== null && Agora < dataLimite && timeUseBotQueues !== "0" && ticket.amountUsedBotQueues !== 0) {
+              return
+            }
+          }
+          await supabase.from("ticket_trackings").update({
+            chatbot_at: null
+          , updated_at: new Date().toISOString()}).eq("id", ticketTraking.id);
+        }
+
+        const outOfHoursMessage = queue.outOfHoursMessage;
+
+        if (outOfHoursMessage !== "") {
+          // console.log("entrei3");
+          const body = formatBody(`${outOfHoursMessage}`, ticket);
+
+          console.log("log... 1509")
+
+          const debouncedSentMessage = debounce(
+            async () => {
+              await wbot.sendMessage(
+                `${ticket.contact.number}@${ticket.isGroup ? "g.us" : "s.whatsapp.net"
+                }`,
+                {
+                  text: body
+                }
+              );
+            },
+            1000,
+            ticket.id
+          );
+          debouncedSentMessage();
+
+          //atualiza o contador de vezes que enviou o bot e que foi enviado fora de hora
+          // await supabase.from("tickets").update({
+          //   queue_id: queue.id,
+          //   is_out_of_hour: true,
+          //   amount_used_bot_queues: ticket.amountUsedBotQueues + 1
+          // , updated_at: new Date().toISOString()}).eq("id", ticket.id);
+
+          // return;
+
+        }
+        //atualiza o contador de vezes que enviou o bot e que foi enviado fora de hora
+        await supabase.from("tickets").update({
+          queue_id: queue.id,
+          is_out_of_hour: true,
+          amount_used_bot_queues: ticket.amountUsedBotQueues + 1
+        , updated_at: new Date().toISOString()}).eq("id", ticket.id);
+        return;
+      }
+
+      await UpdateTicketService({
+        ticketData: {
+          // amountUsedBotQueues: 0, 
+          queueId: choosenQueue.id
+        },
+        // ticketData: { queueId: queues.length ===1 ? null : choosenQueue.id },
+        ticketId: ticket.id,
+        companyId
+      });
+      // }
+
+      if (choosenQueue.chatbots.length > 0 && !ticket.isGroup) {
+        console.log("log... 1554")
+
+        const sectionsRows = [];
+
+        choosenQueue.chatbots.forEach((chatbot, index) => {
+          sectionsRows.push({
+            title: chatbot.name,
+            rowId: `${index + 1}`
+          });
+        });
+        sectionsRows.push({
+          title: "Voltar Menu Inicial",
+          rowId: "#"
+        });
+        const sections = [
+          {
+            title: 'Lista de Botões',
+            rows: sectionsRows
+          }
+        ];
+
+        const listMessage = {
+          text: formatBody(`\u200e${queue.greetingMessage}\n`),
+          title: "Lista\n",
+          buttonText: "Clique aqui",
+          //footer: ".",
+          //listType: 2,
+          sections
+        };
+        const sendMsg = await wbot.sendMessage(
+          `${ticket.contact.number}@${ticket.isGroup ? "g.us" : "s.whatsapp.net"}`,
+          listMessage
+        );
+
+        await verifyMessage(sendMsg, ticket, contact, ticketTraking);
+
+
+
+        if (settings?.settingsUserRandom === "enabled") {
+          console.log("log... 1576")
+          await UpdateTicketService({
+            ticketData: { userId: randomUserId },
+            ticketId: ticket.id,
+            companyId
+          });
+        }
+      }
+
+      if (!choosenQueue.chatbots.length && choosenQueue.greetingMessage.length !== 0) {
+        console.log("log... 1586")
+        console.log(choosenQueue.greetingMessage)
+        const body = formatBody(
+          `\u200e${choosenQueue.greetingMessage}`,
+          ticket
+        );
+        const sentMessage = await wbot.sendMessage(
+          `${contact.number}@${ticket.isGroup ? "g.us" : "s.whatsapp.net"}`,
+          {
+            text: body
+          }
+        );
+
+        await verifyMessage(sentMessage, ticket, contact, ticketTraking);
+
+      }
+
+
+      if (!isNil(choosenQueue.fileListId)) {
+        try {
+
+          const publicFolder = path.resolve(__dirname, "..", "..", "..", "public");
+
+          const files = await ShowFileService(choosenQueue.fileListId, ticket.companyId)
+
+          const folder = path.resolve(publicFolder, `company${ticket.companyId}`, "fileList", String(files.id))
+
+          for (const [index, file] of files.options.entries()) {
+            const mediaSrc = {
+              fieldname: 'medias',
+              originalname: file.path,
+              encoding: '7bit',
+              mimetype: file.mediaType,
+              filename: file.path,
+              path: path.resolve(folder, file.path),
+            } as Express.Multer.File
+
+            // const debouncedSentMessagePosicao = debounce(
+            //   async () => {
+            const sentMessage = await SendWhatsAppMedia({ media: mediaSrc, ticket, body: `\u200e ${file.name}`, isPrivate: false, isForwarded: false });
+
+            await verifyMediaMessage(sentMessage, ticket, ticket.contact, ticketTraking, false, false, wbot);
+            //   },
+            //   2000,
+            //   ticket.id
+            // );
+            // debouncedSentMessagePosicao();
+          };
+
+
+        } catch (error) {
+          logger.info(error);
+        }
+      }
+
+      await delay(4000)
+
+
+      //se fila está parametrizada para encerrar ticket automaticamente
+      if (choosenQueue.closeTicket) {
+        try {
+
+          await UpdateTicketService({
+            ticketData: {
+              status: "closed",
+              queueId: choosenQueue.id,
+              // sendFarewellMessage: false,
+            },
+            ticketId: ticket.id,
+            companyId,
+          });
+        } catch (error) {
+          logger.info(error);
+        }
+
+        return;
+      }
+
+      const { count } = await supabase.from("tickets").select("*", { count: "exact", head: true }).is("user_id", null).eq("status", "pending").eq("company_id", companyId).eq("queue_id", choosenQueue.id).eq("whatsapp_id", wbot.id).eq("is_group", false);
+
+      console.log("======== choose queue ========")
+      await CreateLogTicketService({
+        ticketId: ticket.id,
+        type: "queue",
+        queueId: choosenQueue.id
+      });
+
+      if (enableQueuePosition && !choosenQueue.chatbots.length) {
+        // Lógica para enviar posição da fila de atendimento
+        const qtd = count.count === 0 ? 1 : count.count
+        const msgFila = `${settings.sendQueuePositionMessage} *${qtd}*`;
+        // const msgFila = `*Assistente Virtual:*\n{{ms}} *{{name}}*, sua posição na fila de atendimento é: *${qtd}*`;
+        const bodyFila = formatBody(`${msgFila}`, ticket);
+        const debouncedSentMessagePosicao = debounce(
+          async () => {
+            await wbot.sendMessage(
+              `${contact.number}@${ticket.isGroup ? "g.us" : "s.whatsapp.net"
+              }`,
+              {
+                text: bodyFila
+              }
+            );
+          },
+          3000,
+          ticket.id
+        );
+        debouncedSentMessagePosicao();
+      }
+
+
+    } else {
+
+      if (ticket.isGroup) return;
+
+      if (maxUseBotQueues && maxUseBotQueues !== 0 && ticket.amountUsedBotQueues >= maxUseBotQueues) {
+        // await UpdateTicketService({
+        //   ticketData: { queueId: queues[0].id },
+        //   ticketId: ticket.id
+        // });
+
+        return;
+      }
+
+      if (timeUseBotQueues !== "0") {
+        //Regra para desabilitar o chatbot por x minutos/horas após o primeiro envio
+        //const ticketTraking = await FindOrCreateATicketTrakingService({ ticketId: ticket.id, companyId });
+        let dataLimite = new Date();
+        let Agora = new Date();
+
+        console.log("log... 1749")
+
+        if (ticketTraking.chatbotAt !== null) {
+          dataLimite.setMinutes(ticketTraking.chatbotAt.getMinutes() + (Number(timeUseBotQueues)));
+
+          console.log("log... 1754")
+
+          if (ticketTraking.chatbotAt !== null && Agora < dataLimite && timeUseBotQueues !== "0" && ticket.amountUsedBotQueues !== 0) {
+            return
+          }
+        }
+        await supabase.from("ticket_trackings").update({
+          chatbot_at: null
+        , updated_at: new Date().toISOString()}).eq("id", ticketTraking.id);
+      }
+
+      // if (wbot.waitForSocketOpen()) {
+      //   console.log("AGUARDANDO")
+      //   console.log(wbot.waitForSocketOpen())
+      // }
+
+      wbot.presenceSubscribe(contact.remoteJid);
+
+
+      let options = "";
+
+      wbot.sendPresenceUpdate("composing", contact.remoteJid);
+
+      console.log("============= queue menu =============")
+      const sectionsRows = [];
+
+      queues.forEach((queue, index) => {
+        sectionsRows.push({
+          title: `${queue.name}`,//queue.name,
+          description: `_`,
+          rowId: `${index + 1}`
+        });
+      });
+
+     sectionsRows.push({
+          title: "Voltar Menu Inicial",
+          rowId: "#"
+        });
+        
+      await CreateLogTicketService({
+        ticketId: ticket.id,
+        type: "chatBot"
+      });
+
+      await delay(1000);
+      const body = formatBody(
+        `\u200e${greetingMessage}\n\n${options}`,
+        ticket
+      );
+
+      await wbot.sendPresenceUpdate('paused', contact.remoteJid)
+
+      if (ticket.whatsapp.greetingMediaAttachment !== null) {
+
+        console.log("log... 1799")
+
+        const filePath = path.resolve("public", `company${companyId}`, ticket.whatsapp.greetingMediaAttachment);
+
+        const fileExists = fs.existsSync(filePath);
+        // console.log(fileExists);
+        if (fileExists) {
+          const messagePath = ticket.whatsapp.greetingMediaAttachment
+          const optionsMsg = await getMessageOptions(messagePath, filePath, String(companyId), body);
+
+          console.log("log... 1809")
+
+          const debouncedSentgreetingMediaAttachment = debounce(
+            async () => {
+
+              let sentMessage = await wbot.sendMessage(`${ticket.contact.number}@${ticket.isGroup ? "g.us" : "s.whatsapp.net"}`, { ...optionsMsg });
+
+              await verifyMediaMessage(sentMessage, ticket, contact, ticketTraking, false, false, wbot);
+
+            },
+            1000,
+            ticket.id
+          );
+          debouncedSentgreetingMediaAttachment();
+        } else {
+          console.log("log... 1824")
+          const debouncedSentMessage = debounce(
+            async () => {
+              const sections = [
+                {
+                  title: 'Lista de Botões',
+                  rows: sectionsRows
+                }
+              ];
+
+              const listMessage = {
+                title: "Lista\n",
+                text: formatBody(`\u200e${greetingMessage}\n`),
+                buttonText: "Clique aqui",
+                //footer: "_",
+                sections
+              };
+
+              const sendMsg = await wbot.sendMessage(
+                `${contact.number}@${ticket.isGroup ? "g.us" : "s.whatsapp.net"}`,
+                listMessage
+              );
+
+              await verifyMessage(sendMsg, ticket, contact, ticketTraking);
+
+            },
+            1000,
+            ticket.id
+          );
+          debouncedSentMessage();
+        }
+
+        console.log("log... 1843")
+
+        await UpdateTicketService({
+          ticketData: {
+            // amountUsedBotQueues: ticket.amountUsedBotQueues + 1 
+          },
+          ticketId: ticket.id,
+          companyId
+        });
+
+        return
+      } else {
+
+        console.log("log... 1854 - Lista")
+
+        const debouncedSentMessage = debounce(
+          async () => {
+            const sections = [
+              {
+                title: 'Lista de Botões',
+                rows: sectionsRows
+              }
+            ];
+
+            const listMessage = {
+              title: "Lista\n",
+              text: formatBody(`\u200e${greetingMessage}\n`),
+              buttonText: "Clique aqui",
+              //footer: "_",
+              sections
+            };
+
+            const sendMsg = await wbot.sendMessage(
+              `${contact.number}@${ticket.isGroup ? "g.us" : "s.whatsapp.net"}`,
+              listMessage
+            );
+
+            await verifyMessage(sendMsg, ticket, contact, ticketTraking);
+          },
+          1000,
+          ticket.id
+        );
+
+        await UpdateTicketService({
+          ticketData: {
+
+          },
+          ticketId: ticket.id,
+          companyId
+        });
+
+        debouncedSentMessage();
+      }
+    }
+  };
+
+  const botButton = async () => {
+
+    console.log("log... 1449")
+
+    if (choosenQueue || (queues.length === 1 && chatbot)) {
+      console.log("log... 1452")
+      // console.log("entrou no choose", ticket.isOutOfHour, ticketTraking.chatbotAt)
+      if (queues.length === 1) choosenQueue = queues[0]
+      const queue = await supabase.from("queues").select("*").eq("id", choosenQueue.id).maybeSingle().then(res => res.data ? { ...res.data, outOfHoursMessage: res.data.out_of_hours_message, greetingMessage: res.data.greeting_message } : null)
+
+      console.log("log... 1457")
+
+      if (ticket.isOutOfHour === false && ticketTraking.chatbotAt !== null) {
+        console.log("log... 1460")
+        await supabase.from("ticket_trackings").update({
+          chatbot_at: null
+        , updated_at: new Date().toISOString()}).eq("id", ticketTraking.id);
+        await supabase.from("tickets").update({
+          amount_used_bot_queues: 0
+        , updated_at: new Date().toISOString()}).eq("id", ticket.id);
+      }
+
+      let currentSchedule;
+
+      if (settings?.scheduleType === "queue") {
+        console.log("log... 1472")
+        currentSchedule = await VerifyCurrentSchedule(companyId, queue.id, 0);
+      }
+
+      if (
+        settings?.scheduleType === "queue" && ticket.status !== "open" &&
+        !isNil(currentSchedule) && (ticket.amountUsedBotQueues < maxUseBotQueues || maxUseBotQueues === 0)
+        && (!currentSchedule || currentSchedule.inActivity === false)
+        && (!ticket.isGroup || ticket.whatsapp?.groupAsTicket === "enabled")
+      ) {
+        if (timeUseBotQueues !== "0") {
+          console.log("log... 1483")
+          //Regra para desabilitar o chatbot por x minutos/horas após o primeiro envio
+          //const ticketTraking = await FindOrCreateATicketTrakingService({ ticketId: ticket.id, companyId });
+          let dataLimite = new Date();
+          let Agora = new Date();
+
+
+          if (ticketTraking.chatbotAt !== null) {
+            console.log("log... 1491")
+            dataLimite.setMinutes(ticketTraking.chatbotAt.getMinutes() + (Number(timeUseBotQueues)));
+
+            if (ticketTraking.chatbotAt !== null && Agora < dataLimite && timeUseBotQueues !== "0" && ticket.amountUsedBotQueues !== 0) {
+              return
+            }
+          }
+          await supabase.from("ticket_trackings").update({
+            chatbot_at: null
+          , updated_at: new Date().toISOString()}).eq("id", ticketTraking.id);
+        }
+
+        const outOfHoursMessage = queue.outOfHoursMessage;
+
+        if (outOfHoursMessage !== "") {
+          // console.log("entrei3");
+          const body = formatBody(`${outOfHoursMessage}`, ticket);
+
+          console.log("log... 1509")
+
+          const debouncedSentMessage = debounce(
+            async () => {
+              await wbot.sendMessage(
+                `${ticket.contact.number}@${ticket.isGroup ? "g.us" : "s.whatsapp.net"
+                }`,
+                {
+                  text: body
+                }
+              );
+            },
+            1000,
+            ticket.id
+          );
+          debouncedSentMessage();
+
+        }
+
+        await supabase.from("tickets").update({
+          queue_id: queue.id,
+          is_out_of_hour: true,
+          amount_used_bot_queues: ticket.amountUsedBotQueues + 1
+        , updated_at: new Date().toISOString()}).eq("id", ticket.id);
+        return;
+      }
+
+      await UpdateTicketService({
+        ticketData: {
+          queueId: choosenQueue.id
+        },
+        ticketId: ticket.id,
+        companyId
+      });
+      // }
+
+      if (choosenQueue.chatbots.length > 0 && !ticket.isGroup) {
+        console.log("log... 1554")
+        const debouncedSentMessage = debounce(
+          async () => {
+            try {
+              console.log("log... enviando as opcoes das filas");
+              // Busca o número do WhatsApp associado ao ticket
+              const whatsapp = await supabase.from("whatsapps").select("*").eq("id", ticket.whatsapp_id || ticket.whatsappId).maybeSingle().then(res => res.data);
+              if (!whatsapp || !whatsapp.number) {
+                console.error('Número de WhatsApp não encontrado para o ticket:', ticket.whatsappId);
+                throw new Error('Número de WhatsApp não encontrado');
+              }
+              const botNumber = whatsapp.number;
+
+              const buttons = [];
+
+              // Adiciona os chatbots como botões
+              choosenQueue.chatbots.forEach((chatbot, index) => {
+                buttons.push({
+                  name: 'quick_reply',  // Substitua por 'quick_reply' se necessário, dependendo do contexto
+                  buttonParamsJson: JSON.stringify({
+                    display_text: chatbot.name,
+                    id: `${index + 1}`
+                  })
+                });
+              });
+
+              buttons.push({
+                name: 'quick_reply',
+                buttonParamsJson: JSON.stringify({
+                  display_text: "Voltar Menu Inicial",
+                  id: "#"
+                })
+              });
+              const interactiveMsg = {
+                viewOnceMessage: {
+                  message: {
+                    interactiveMessage: {
+                      body: {
+                        text: `\u200e${choosenQueue.greetingMessage}`,
+                      },
+                      nativeFlowMessage: {
+                        buttons: buttons,
+                        messageParamsJson: JSON.stringify({
+                          from: 'apiv2',
+                          templateId: '4194019344155670',
+                        }),
+                      },
+                    },
+                  },
+                },
+              };
+              const jid = `${contact.number}@${ticket.isGroup ? 'g.us' : 's.whatsapp.net'}`;
+              const newMsg = generateWAMessageFromContent(jid, interactiveMsg, { userJid: botNumber, });
+              await wbot.relayMessage(jid, newMsg.message!, { messageId: newMsg.key.id }
+              );
+              if (newMsg) {
+                await wbot.upsertMessage(newMsg, 'notify');
+              }
+            } catch (error) {
+              console.error('Erro ao enviar ou fazer upsert da mensagem:', error);
+            }
+          },
+          1000,
+          ticket.id
+        );
+        debouncedSentMessage();
+
+     if (settings?.settingsUserRandom === "enabled") {
+          console.log("log... 1576")
+          await UpdateTicketService({
+            ticketData: { userId: randomUserId },
+            ticketId: ticket.id,
+            companyId
+          });
+        }
+      }
+
+      if (!choosenQueue.chatbots.length && choosenQueue.greetingMessage.length !== 0) {
+        console.log("log... 1586")
+        console.log(choosenQueue.greetingMessage)
+        const body = formatBody(
+          `\u200e${choosenQueue.greetingMessage}`,
+          ticket
+        );
+        const sentMessage = await wbot.sendMessage(
+          `${contact.number}@${ticket.isGroup ? "g.us" : "s.whatsapp.net"}`,
+          {
+            text: body
+          }
+        );
+
+        await verifyMessage(sentMessage, ticket, contact, ticketTraking);
+
+      }
+
+
+      if (!isNil(choosenQueue.fileListId)) {
+        try {
+
+          const publicFolder = path.resolve(__dirname, "..", "..", "..", "public");
+
+          const files = await ShowFileService(choosenQueue.fileListId, ticket.companyId)
+
+          const folder = path.resolve(publicFolder, `company${ticket.companyId}`, "fileList", String(files.id))
+
+          for (const [index, file] of files.options.entries()) {
+            const mediaSrc = {
+              fieldname: 'medias',
+              originalname: file.path,
+              encoding: '7bit',
+              mimetype: file.mediaType,
+              filename: file.path,
+              path: path.resolve(folder, file.path),
+            } as Express.Multer.File
+
+            // const debouncedSentMessagePosicao = debounce(
+            //   async () => {
+            const sentMessage = await SendWhatsAppMedia({ media: mediaSrc, ticket, body: `\u200e ${file.name}`, isPrivate: false, isForwarded: false });
+
+            await verifyMediaMessage(sentMessage, ticket, ticket.contact, ticketTraking, false, false, wbot);
+            //   },
+            //   2000,
+            //   ticket.id
+            // );
+            // debouncedSentMessagePosicao();
+          };
+
+
+        } catch (error) {
+          logger.info(error);
+        }
+      }
+
+      await delay(4000)
+
+
+      //se fila está parametrizada para encerrar ticket automaticamente
+      if (choosenQueue.closeTicket) {
+        try {
+
+          await UpdateTicketService({
+            ticketData: {
+              status: "closed",
+              queueId: choosenQueue.id,
+              // sendFarewellMessage: false,
+            },
+            ticketId: ticket.id,
+            companyId,
+          });
+        } catch (error) {
+          logger.info(error);
+        }
+
+        return;
+      }
+
+      const { count } = await supabase.from("tickets").select("*", { count: "exact", head: true }).is("user_id", null).eq("status", "pending").eq("company_id", companyId).eq("queue_id", choosenQueue.id).eq("whatsapp_id", wbot.id).eq("is_group", false);
+
+      console.log("======== choose queue ========")
+      await CreateLogTicketService({
+        ticketId: ticket.id,
+        type: "queue",
+        queueId: choosenQueue.id
+      });
+
+      if (enableQueuePosition && !choosenQueue.chatbots.length) {
+        // Lógica para enviar posição da fila de atendimento
+        const qtd = count.count === 0 ? 1 : count.count
+        const msgFila = `${settings.sendQueuePositionMessage} *${qtd}*`;
+        // const msgFila = `*Assistente Virtual:*\n{{ms}} *{{name}}*, sua posição na fila de atendimento é: *${qtd}*`;
+        const bodyFila = formatBody(`${msgFila}`, ticket);
+        const debouncedSentMessagePosicao = debounce(
+          async () => {
+            await wbot.sendMessage(
+              `${contact.number}@${ticket.isGroup ? "g.us" : "s.whatsapp.net"
+              }`,
+              {
+                text: bodyFila
+              }
+            );
+          },
+          3000,
+          ticket.id
+        );
+        debouncedSentMessagePosicao();
+      }
+
+
+    } else {
+
+      if (ticket.isGroup) return;
+
+      if (maxUseBotQueues && maxUseBotQueues !== 0 && ticket.amountUsedBotQueues >= maxUseBotQueues) {
+        // await UpdateTicketService({
+        //   ticketData: { queueId: queues[0].id },
+        //   ticketId: ticket.id
+        // });
+
+        return;
+      }
+
+      if (timeUseBotQueues !== "0") {
+        //Regra para desabilitar o chatbot por x minutos/horas após o primeiro envio
+        //const ticketTraking = await FindOrCreateATicketTrakingService({ ticketId: ticket.id, companyId });
+        let dataLimite = new Date();
+        let Agora = new Date();
+
+        console.log("log... 1749")
+
+        if (ticketTraking.chatbotAt !== null) {
+          dataLimite.setMinutes(ticketTraking.chatbotAt.getMinutes() + (Number(timeUseBotQueues)));
+
+          console.log("log... 1754")
+
+          if (ticketTraking.chatbotAt !== null && Agora < dataLimite && timeUseBotQueues !== "0" && ticket.amountUsedBotQueues !== 0) {
+            return
+          }
+        }
+        await supabase.from("ticket_trackings").update({
+          chatbot_at: null
+        , updated_at: new Date().toISOString()}).eq("id", ticketTraking.id);
+      }
+
+      wbot.presenceSubscribe(contact.remoteJid);
+
+
+      let options = "";
+
+      wbot.sendPresenceUpdate("composing", contact.remoteJid);
+
+      console.log("============= queue menu =============")
+
+      const body = formatBody(
+        `\u200e${greetingMessage}\n\n${options}`,
+        ticket
+      );
+
+      await CreateLogTicketService({
+        ticketId: ticket.id,
+        type: "chatBot"
+      });
+
+      await delay(1000);
+
+      await wbot.sendPresenceUpdate('paused', contact.remoteJid)
+
+      if (ticket.whatsapp.greetingMediaAttachment !== null) {
+
+        console.log("log... 1799")
+
+        const filePath = path.resolve("public", `company${companyId}`, ticket.whatsapp.greetingMediaAttachment);
+
+        const fileExists = fs.existsSync(filePath);
+        // console.log(fileExists);
+        if (fileExists) {
+          console.log("log... botao com midia")
+          const debouncedSentgreetingMediaAttachment = debounce(
+            async () => {
+              try {
+                const whatsapp = await supabase.from("whatsapps").select("*").eq("id", ticket.whatsapp_id || ticket.whatsappId).maybeSingle().then(res => res.data);
+                if (!whatsapp || !whatsapp.number) {
+                  console.error('Número de WhatsApp não encontrado para o ticket:', ticket.whatsappId);
+                  throw new Error('Número de WhatsApp não encontrado');
+                }
+                const botNumber = whatsapp.number;
+
+                const buttons = [];
+
+                queues.forEach((queue, index) => {
+                  buttons.push({
+                    name: 'quick_reply',
+                    buttonParamsJson: JSON.stringify({
+                      display_text: queue.name,
+                      id: `${index + 1}`
+                    }),
+                  });
+                });
+
+                buttons.push({
+                  name: 'quick_reply',
+                  buttonParamsJson: JSON.stringify({
+                    display_text: "Encerrar atendimento",
+                    id: "Sair"
+                  }),
+                });
+
+                // Verifica se há uma mídia para enviar
+                if (ticket.whatsapp.greetingMediaAttachment) {
+                  const filePath = path.resolve("public", `company${companyId}`, ticket.whatsapp.greetingMediaAttachment);
+                  const fileExists = fs.existsSync(filePath);
+
+                  if (fileExists) {
+                    // Carrega a imagem local
+                    const imageMessageContent = await generateWAMessageContent(
+                      { image: { url: filePath } }, // Caminho da imagem local
+                      { upload: wbot.waUploadToServer! }
+                    );
+                    const imageMessage = imageMessageContent.imageMessage;
+
+                    // Mensagem interativa com mídia
+                    const interactiveMsg = {
+                      viewOnceMessage: {
+                        message: {
+                          interactiveMessage: {
+                            body: {
+                              text: `\u200e${greetingMessage}`,
+                            },
+                            header: {
+                              imageMessage,  // Anexa a imagem
+                              hasMediaAttachment: true
+                            },
+                            nativeFlowMessage: {
+                              buttons: buttons,
+                              messageParamsJson: JSON.stringify({
+                                from: 'apiv2',
+                                templateId: '4194019344155670',
+                              }),
+                            },
+                          },
+                        },
+                      },
+                    };
+
+                    const jid = `${contact.number}@${ticket.isGroup ? 'g.us' : 's.whatsapp.net'}`;
+                    const newMsg = generateWAMessageFromContent(jid, interactiveMsg, { userJid: botNumber });
+                    await wbot.relayMessage(jid, newMsg.message!, { messageId: newMsg.key.id });
+
+                    if (newMsg) {
+                      await wbot.upsertMessage(newMsg, 'notify');
+                    }
+                  }
+                }
+              } catch (error) {
+                console.error('Erro ao enviar ou fazer upsert da mensagem:', error);
+              }
+            },
+            1000,
+            ticket.id
+          );
+          debouncedSentgreetingMediaAttachment();
+        } else {
+          console.log("log... Botao sem midia")
+          const debouncedSentButton = debounce(
+            async () => {
+              try {
+                const whatsapp = await supabase.from("whatsapps").select("*").eq("id", ticket.whatsapp_id || ticket.whatsappId).maybeSingle().then(res => res.data);
+                if (!whatsapp || !whatsapp.number) {
+                  console.error('Número de WhatsApp não encontrado para o ticket:', ticket.whatsappId);
+                  throw new Error('Número de WhatsApp não encontrado');
+                }
+                const botNumber = whatsapp.number;
+
+                const buttons = [];
+
+                queues.forEach((queue, index) => {
+                  buttons.push({
+                    name: 'quick_reply',
+                    buttonParamsJson: JSON.stringify({
+                      display_text: queue.name,
+                      id: `${index + 1}`
+                    }),
+                  });
+                });
+
+                buttons.push({
+                  name: 'quick_reply',
+                  buttonParamsJson: JSON.stringify({
+                    display_text: "Encerrar atendimento",
+                    id: "Sair"
+                  }),
+                });
+
+                const interactiveMsg = {
+                  viewOnceMessage: {
+                    message: {
+                      interactiveMessage: {
+                        body: {
+                          text: `\u200e${greetingMessage}`,
+                        },
+                        nativeFlowMessage: {
+                          buttons: buttons,
+                          messageParamsJson: JSON.stringify({
+                            from: 'apiv2',
+                            templateId: '4194019344155670',
+                          }),
+                        },
+                      },
+                    },
+                  },
+                };
+
+                const jid = `${contact.number}@${ticket.isGroup ? 'g.us' : 's.whatsapp.net'}`;
+                const newMsg = generateWAMessageFromContent(jid, interactiveMsg, { userJid: botNumber });
+                await wbot.relayMessage(jid, newMsg.message!, { messageId: newMsg.key.id });
+
+                if (newMsg) {
+                  await wbot.upsertMessage(newMsg, 'notify');
+                }
+              } catch (error) {
+                console.error('Erro ao enviar ou fazer upsert da mensagem:', error);
+              }
+            },
+            1000,
+            ticket.id
+          );
+
+          debouncedSentButton();
+        }
+
+        console.log("log... 1843")
+
+        await UpdateTicketService({
+          ticketData: {
+          },
+          ticketId: ticket.id,
+          companyId
+        });
+
+        return
+      } else {
+
+        console.log("log... 1854 - botao")
+
+        const debouncedSentButton = debounce(
+          async () => {
+            try {
+              const whatsapp = await supabase.from("whatsapps").select("*").eq("id", ticket.whatsapp_id || ticket.whatsappId).maybeSingle().then(res => res.data);
+              if (!whatsapp || !whatsapp.number) {
+                console.error('Número de WhatsApp não encontrado para o ticket:', ticket.whatsappId);
+                throw new Error('Número de WhatsApp não encontrado');
+              }
+              const botNumber = whatsapp.number;
+
+              const buttons = [];
+
+              queues.forEach((queue, index) => {
+                buttons.push({
+                  name: 'quick_reply',
+                  buttonParamsJson: JSON.stringify({
+                    display_text: queue.name,
+                    id: `${index + 1}`
+                  }),
+                });
+              });
+
+              buttons.push({
+                name: 'quick_reply',
+                buttonParamsJson: JSON.stringify({
+                  display_text: "Encerrar atendimento",
+                  id: "Sair"
+                }),
+              });
+
+              const interactiveMsg = {
+                viewOnceMessage: {
+                  message: {
+                    interactiveMessage: {
+                      body: {
+                        text: `\u200e${greetingMessage}`,
+                      },
+                      nativeFlowMessage: {
+                        buttons: buttons,
+                        messageParamsJson: JSON.stringify({
+                          from: 'apiv2',
+                          templateId: '4194019344155670',
+                        }),
+                      },
+                    },
+                  },
+                },
+              };
+
+              const jid = `${contact.number}@${ticket.isGroup ? 'g.us' : 's.whatsapp.net'}`;
+              const newMsg = generateWAMessageFromContent(jid, interactiveMsg, { userJid: botNumber });
+              await wbot.relayMessage(jid, newMsg.message!, { messageId: newMsg.key.id });
+
+              if (newMsg) {
+                await wbot.upsertMessage(newMsg, 'notify');
+              }
+            } catch (error) {
+              console.error('Erro ao enviar ou fazer upsert da mensagem:', error);
+            }
+          },
+          1000,
+          ticket.id
+        );
+
+
+
+        await UpdateTicketService({
+          ticketData: {
+
+          },
+          ticketId: ticket.id,
+          companyId
+        });
+        debouncedSentButton();
+      }
+    }
+  };
+
+  if (typeBot === "text") {
+    return botText();
+  }
+  
+   if (typeBot === "list") {
+    return botList();
+  }
+
+  if (typeBot === "button") {
+    return botButton();
+  }
+
+  if (typeBot === "button" && queues.length > 3) {
+    return botText();
+  }
+};
+
+export const verifyRating = (ticketTraking: any) => {
+  console.log("2029", { verifyRating })
+  if (
+    ticketTraking &&
+    ticketTraking.finishedAt === null &&
+    ticketTraking.closedAt !== null &&
+    ticketTraking.userId !== null &&
+    ticketTraking.ratingAt === null
+  ) {
+    return true;
+  }
+  return false;
+};
+
+export const handleRating = async (
+  rate: number,
+  ticket: any,
+  ticketTraking: any
+) => {
+  const io = getIO();
+  const companyId = ticket.companyId;
+
+  console.log("2050", { handleRating })
+
+  // console.log("GETTING WHATSAPP HANDLE RATING", ticket.whatsappId, ticket.id)
+  const { complationMessage } = await ShowWhatsAppService(
+    ticket.whatsappId,
+
+    companyId
+  );
+
+  let finalRate = rate;
+
+  if (rate < 0) {
+    finalRate = 0;
+  }
+  if (rate > 10) {
+    finalRate = 10;
+  }
+
+  await supabase.from("user_ratings").insert({
+    ticket_id: ticketTraking.ticket_id,
+    company_id: ticketTraking.company_id,
+    user_id: ticketTraking.user_id,
+    rate: finalRate
+  });
+
+  if (
+    !isNil(complationMessage) &&
+    complationMessage !== "" &&
+    !ticket.isGroup
+  ) {
+    const body = formatBody(`\u200e${complationMessage}`, ticket);
+    if (ticket.channel === "whatsapp") {
+      const msg = await SendWhatsAppMessage({ body, ticket });
+
+      await verifyMessage(msg, ticket, ticket.contact, ticketTraking);
+    }
+
+    if (["facebook", "instagram"].includes(ticket.channel)) {
+      await sendFaceMessage({ body, ticket });
+    }
+  }
+
+  await supabase.from("tickets").update({
+    is_bot: false,
+    status: "closed",
+    amount_used_bot_queues_n_p_s: 0
+  , updated_at: new Date().toISOString()}).eq("id", ticket.id);
+
+  //loga fim de atendimento
+  await CreateLogTicketService({
+    userId: ticket.userId,
+    queueId: ticket.queueId,
+    ticketId: ticket.id,
+    type: "closed"
+  });
+
+  io.of(String(companyId))
+    // .to("open")
+    .emit(`company-${companyId}-ticket`, {
+      action: "delete",
+      ticket,
+      ticketId: ticket.id
+    });
+
+  io.of(String(companyId))
+    // .to(ticket.status)
+    // .to(ticket.id.toString())
+    .emit(`company-${companyId}-ticket`, {
+      action: "update",
+      ticket,
+      ticketId: ticket.id
+    });
+};
+
+const sanitizeName = (name: string): string => {
+  let sanitized = name.split(" ")[0];
+  sanitized = sanitized.replace(/[^a-zA-Z0-9]/g, "");
+  return sanitized.substring(0, 60);
+};
+
+const deleteFileSync = (path: string): void => {
+  try {
+    fs.unlinkSync(path);
+  } catch (error) {
+    console.error("Erro ao deletar o arquivo:", error);
+  }
+};
+
+export const convertTextToSpeechAndSaveToFile = (
+  text: string,
+  filename: string,
+  subscriptionKey: string,
+  serviceRegion: string,
+  voice: string = "pt-BR-FabioNeural",
+  audioToFormat: string = "mp3"
+): Promise<void> => {
+  return new Promise((resolve, reject) => {
+    const speechConfig = SpeechConfig.fromSubscription(
+      subscriptionKey,
+      serviceRegion
+    );
+    speechConfig.speechSynthesisVoiceName = voice;
+    const audioConfig = AudioConfig.fromAudioFileOutput(`${filename}.wav`);
+    const synthesizer = new SpeechSynthesizer(speechConfig, audioConfig);
+    synthesizer.speakTextAsync(
+      text,
+      result => {
+        if (result) {
+          convertWavToAnotherFormat(
+            `${filename}.wav`,
+            `${filename}.${audioToFormat}`,
+            audioToFormat
+          )
+            .then(output => {
+              resolve();
+            })
+            .catch(error => {
+              console.error(error);
+              reject(error);
+            });
+        } else {
+          reject(new Error("No result from synthesizer"));
+        }
+        synthesizer.close();
+      },
+      error => {
+        console.error(`Error: ${error}`);
+        synthesizer.close();
+        reject(error);
+      }
+    );
+  });
+};
+
+const convertWavToAnotherFormat = (
+  inputPath: string,
+  outputPath: string,
+  toFormat: string
+) => {
+  return new Promise((resolve, reject) => {
+    ffmpeg()
+      .input(inputPath)
+      .toFormat(toFormat)
+      .on("end", () => resolve(outputPath))
+      .on("error", (err: { message: any }) =>
+        reject(new Error(`Error converting file: ${err.message}`))
+      )
+      .save(outputPath);
+  });
+};
+
+// Transfere o ticket para uma fila.
+// chama a transferência e abre o ticket na fila escolhida
+export const transferQueue = async (
+  targetQueueId: number | null,
+  ticket: Ticket,
+  contact: Contact,
+  msgTransfer?: string
+) => {
+  if (!targetQueueId || targetQueueId <= 0) return;
+
+  // Agora o ticket NÃO vai mais para "open"
+  await UpdateTicketService({
+    ticketId: ticket.id,
+    companyId: ticket.companyId,
+    ticketData: {
+      isTransfered: true,        // <- aciona a lógica de transferência
+      queueId: targetQueueId,    // <- fila de destino
+      status: "pending",         // <- **** AQUI !!!! (Aguardando)
+      userId: null,              // <- libera para qualquer atendente pegar
+      msgTransfer: msgTransfer ?? 
+        `Transferindo você para um de nossos atendentes humanos.`
+    }
+  });
+};
+
+const flowbuilderIntegration = async (
+  msg: proto.IWebMessageInfo,
+  wbot: Session,
+  companyId: number,
+  queueIntegration: QueueIntegrations,
+  ticket: Ticket,
+  contact: Contact,
+  isFirstMsg?: Ticket,
+  isTranfered?: boolean
+) => {
+  const io = getIO();
+  const quotedMsg = await verifyQuotedMessage(msg);
+  const body = getBodyMessage(msg);
+  let shouldReleaseWelcomeLock = false;
+
+  if (contact.disableBot) {
+    return;
+  }
+
+  // ============ LOCK ESPECÍFICO PARA INÍCIO DE CONVERSA ============
+  const fromMe = !!msg?.key?.fromMe;
+  
+  // Aplica lock APENAS para mensagens iniciais que disparam o menu de boas-vindas
+  // Condição: primeira mensagem OU ticket recém-criado sem interação anterior
+  if (
+    !fromMe &&
+    ticket &&
+    ticket.status === "pending" &&
+    !ticket.userId &&
+    !ticket.flowStopped &&
+    !ticket.lastFlowId
+  ) {
+    const lockAcquired = await acquireTicketWelcomeLock(ticket.id);
+    
+    if (!lockAcquired) {
+      console.log(`🔒 [MENU-LOCK] Ticket ${ticket.id} já processando menu inicial - ignorando duplicata`);
+      return;
+    }
+    shouldReleaseWelcomeLock = true;
+    
+    console.log(`🔓 [MENU-LOCK] Iniciando menu para novo ticket ${ticket.id}`);
+  }
+  // ============ FIM DO LOCK ============
+  try {
+
+  /*
+  const messageData = {
+    wid: msg.key.id,
+    ticketId: ticket.id,
+    contactId: msg.key.fromMe ? undefined : contact.id,
+    body: body,
+    fromMe: msg.key.fromMe,
+    read: msg.key.fromMe,
+    quotedMsgId: quotedMsg?.id,
+    ack: Number(String(msg.status).replace('PENDING', '2').replace('NaN', '1')) || 2,
+    remoteJid: msg.key.remoteJid,
+    participant: msg.key.participant,
+    dataJson: JSON.stringify(msg),
+    createdAt: new Date(
+      Math.floor(getTimestampMessage(msg.messageTimestamp) * 1000)
+    ).toISOString(),
+    ticketImported: ticket.imported,
+  };
+
+  await CreateMessageService({ messageData, companyId: ticket.companyId });
+  */
+
+  if (!msg.key.fromMe && ticket.status === "closed") {
+    console.log("===== CHANGE =====");
+    await UpdateTicketService({
+      ticketData: { status: "pending" },
+      ticketId: ticket.id,
+      companyId
+    });
+    ticket = await ShowTicketService(ticket.id, companyId);
+
+    await UpdateTicketService({
+      ticketData: { status: "pending", integrationId: ticket.integrationId },
+      ticketId: ticket.id,
+      companyId
+    });
+
+    io.of(String(companyId)).emit(`company-${companyId}-ticket`, {
+      action: "delete",
+      ticket,
+      ticketId: ticket.id
+    });
+
+    io.to(ticket.status).emit(`company-${companyId}-ticket`, {
+      action: "update",
+      ticket,
+      ticketId: ticket.id
+    });
+  }
+
+  if (msg.key.fromMe) {
+    return;
+  }
+
+  const whatsapp = await ShowWhatsAppService(wbot.id!, companyId);
+
+  const { data: listPhrase } = await supabase
+    .from("flow_campaigns")
+    .select("*")
+    .eq("whatsapp_id", whatsapp.id);
+
+  if (
+    !isFirstMsg &&
+    listPhrase.filter(item => item.phrase === body).length === 0
+  ) {
+    const { data: flow } = await supabase
+      .from("flow_builders")
+      .select("*")
+      .eq("id", whatsapp.flowIdWelcome)
+      .maybeSingle();
+    if (flow) {
+      const nodes: INodes[] = flow.flow["nodes"];
+      const connections: IConnections[] = flow.flow["connections"];
+
+      const mountDataContact = {
+        number: contact.number,
+        name: contact.name,
+        email: contact.email
+      };
+
+      const nextStageWelcome = flow.flow["nodes"][0].id;
+      await ActionsWebhookService(
+        whatsapp.id,
+        whatsapp.flowIdWelcome,
+        ticket.companyId,
+        nodes,
+        connections,
+        nextStageWelcome,
+        null,
+        {},
+        "",
+        undefined,
+        ticket.id,
+        mountDataContact,
+        msg
+      );
+    }
+  }
+
+  const dateTicket = new Date(
+    isFirstMsg?.updatedAt ? isFirstMsg.updatedAt : ""
+  );
+  const dateNow = new Date();
+  const diferencaEmMilissegundos = Math.abs(
+    differenceInMilliseconds(dateTicket, dateNow)
+  );
+  const seisHorasEmMilissegundos = 1000;
+
+  if (
+    listPhrase.filter(item => item.phrase === body).length === 0 &&
+    diferencaEmMilissegundos >= seisHorasEmMilissegundos &&
+    isFirstMsg
+  ) {
+    console.log("2427", "handleMessageIntegration");
+
+    const { data: flow } = await supabase
+      .from("flow_builders")
+      .select("*")
+      .eq("id", whatsapp.flowIdNotPhrase)
+      .maybeSingle();
+
+    if (flow) {
+      const nodes: INodes[] = flow.flow["nodes"];
+      const connections: IConnections[] = flow.flow["connections"];
+
+      const mountDataContact = {
+        number: contact.number,
+        name: contact.name,
+        email: contact.email
+      };
+
+      await ActionsWebhookService(
+        whatsapp.id,
+        whatsapp.flowIdNotPhrase,
+        ticket.companyId,
+        nodes,
+        connections,
+        flow.flow["nodes"][0].id,
+        null,
+        "",
+        "",
+        null,
+        ticket.id,
+        mountDataContact,
+        msg
+      );
+    }
+  }
+
+  // Campaign fluxo
+  if (listPhrase.filter(item => item.phrase === body).length !== 0) {
+    const flowDispar = listPhrase.filter(item => item.phrase === body)[0];
+    const { data: flow } = await supabase
+      .from("flow_builders")
+      .select("*")
+      .eq("id", flowDispar.flowId)
+      .maybeSingle();
+    const nodes: INodes[] = flow.flow["nodes"];
+    const connections: IConnections[] = flow.flow["connections"];
+
+    const mountDataContact = {
+      number: contact.number,
+      name: contact.name,
+      email: contact.email
+    };
+
+    await ActionsWebhookService(
+      whatsapp.id,
+      flowDispar.flowId,
+      ticket.companyId,
+      nodes,
+      connections,
+      flow.flow["nodes"][0].id,
+      null,
+      "",
+      "",
+      null,
+      ticket.id,
+      mountDataContact
+    );
+    return;
+  }
+
+  if (ticket.flowWebhook) {
+    const { data: webhook } = await supabase
+      .from("webhooks")
+      .select("*")
+      .eq("company_id", ticket.companyId)
+      .eq("hash_id", ticket.hashFlowId)
+      .maybeSingle();
+
+    if (webhook && webhook.config["details"]) {
+      const { data: flow } = await supabase.from("flow_builders").select("*").eq("id", webhook.config["details"].idFlow).maybeSingle();
+      const nodes: INodes[] = flow.flow["nodes"];
+      const connections: IConnections[] = flow.flow["connections"];
+
+      await ActionsWebhookService(
+        whatsapp.id,
+        webhook.config["details"].idFlow,
+        ticket.companyId,
+        nodes,
+        connections,
+        ticket.lastFlowId,
+        ticket.dataWebhook,
+        webhook.config["details"],
+        ticket.hashFlowId,
+        body,
+        ticket.id
+      );
+    } else {
+      const { data: flow } = await supabase.from("flow_builders").select("*").eq("id", ticket.flowStopped).maybeSingle();
+
+      const nodes: INodes[] = flow.flow["nodes"];
+      const connections: IConnections[] = flow.flow["connections"];
+
+      if (!ticket.lastFlowId) {
+        return;
+      }
+
+      const mountDataContact = {
+        number: contact.number,
+        name: contact.name,
+        email: contact.email
+      };
+
+      await ActionsWebhookService(
+        whatsapp.id,
+        parseInt(ticket.flowStopped),
+        ticket.companyId,
+        nodes,
+        connections,
+        ticket.lastFlowId,
+        null,
+        "",
+        "",
+        body,
+        ticket.id,
+        mountDataContact,
+        msg
+      );
+    }
+  }
+
+  // Campaign fluxo
+  if (listPhrase.filter(item => item.phrase === body).length !== 0) {
+    const flowDispar = listPhrase.filter(item => item.phrase === body)[0];
+    const { data: flow } = await supabase
+      .from("flow_builders")
+      .select("*")
+      .eq("id", flowDispar.flowId)
+      .maybeSingle();
+    const nodes: INodes[] = flow.flow["nodes"];
+    const connections: IConnections[] = flow.flow["connections"];
+
+    const mountDataContact = {
+      number: contact.number,
+      name: contact.name,
+      email: contact.email
+    };
+
+    //const worker = new Worker("./src/services/WebhookService/WorkerAction.ts");
+
+    //console.log('DISPARO3')
+    // Enviar as variáveis como parte da mensagem para o Worker
+    // const data = {
+    //   idFlowDb: flowDispar.flowId,
+    //   companyId: ticketUpdate.companyId,
+    //   nodes: nodes,
+    //   connects: connections,
+    //   nextStage: flow.flow["nodes"][0].id,
+    //   dataWebhook: null,
+    //   details: "",
+    //   hashWebhookId: "",
+    //   pressKey: null,
+    //   idTicket: ticketUpdate.id,
+    //   numberPhrase: mountDataContact
+    // };
+    // worker.postMessage(data);
+
+    // worker.on("message", message => {
+    //   console.log(`Mensagem do worker: ${message}`);
+    // });
+
+    await ActionsWebhookService(
+      whatsapp.id,
+      flowDispar.flowId,
+      ticket.companyId,
+      nodes,
+      connections,
+      flow.flow["nodes"][0].id,
+      null,
+      "",
+      "",
+      null,
+      ticket.id,
+      mountDataContact
+    );
+    return;
+  }
+
+  if (ticket.flowWebhook) {
+    const webhook = await WebhookModel.findOne({
+      where: {
+        company_id: ticket.companyId,
+        hash_id: ticket.hashFlowId
+      }
+    });
+
+    if (webhook && webhook.config["details"]) {
+      const { data: flow } = await supabase.from("flow_builders").select("*").eq("id", webhook.config["details"].idFlow).maybeSingle();
+      const nodes: INodes[] = flow.flow["nodes"];
+      const connections: IConnections[] = flow.flow["connections"];
+
+      // const worker = new Worker("./src/services/WebhookService/WorkerAction.ts");
+
+      // console.log('DISPARO4')
+      // // Enviar as variáveis como parte da mensagem para o Worker
+      // const data = {
+      //   idFlowDb: webhook.config["details"].idFlow,
+      //   companyId: ticketUpdate.companyId,
+      //   nodes: nodes,
+      //   connects: connections,
+      //   nextStage: ticketUpdate.lastFlowId,
+      //   dataWebhook: ticketUpdate.dataWebhook,
+      //   details: webhook.config["details"],
+      //   hashWebhookId: ticketUpdate.hashFlowId,
+      //   pressKey: body,
+      //   idTicket: ticketUpdate.id,
+      //   numberPhrase: ""
+      // };
+      // worker.postMessage(data);
+
+      // worker.on("message", message => {
+      //   console.log(`Mensagem do worker: ${message}`);
+      // });
+
+      await ActionsWebhookService(
+        whatsapp.id,
+        webhook.config["details"].idFlow,
+        ticket.companyId,
+        nodes,
+        connections,
+        ticket.lastFlowId,
+        ticket.dataWebhook,
+        webhook.config["details"],
+        ticket.hashFlowId,
+        body,
+        ticket.id
+      );
+    } else {
+      const { data: flow } = await supabase.from("flow_builders").select("*").eq("id", ticket.flowStopped).maybeSingle();
+
+      const nodes: INodes[] = flow.flow["nodes"];
+      const connections: IConnections[] = flow.flow["connections"];
+
+      if (!ticket.lastFlowId) {
+        return;
+      }
+
+      const mountDataContact = {
+        number: contact.number,
+        name: contact.name,
+        email: contact.email
+      };
+
+      // const worker = new Worker("./src/services/WebhookService/WorkerAction.ts");
+
+      // console.log('DISPARO5')
+      // // Enviar as variáveis como parte da mensagem para o Worker
+      // const data = {
+      //   idFlowDb: parseInt(ticketUpdate.flowStopped),
+      //   companyId: ticketUpdate.companyId,
+      //   nodes: nodes,
+      //   connects: connections,
+      //   nextStage: ticketUpdate.lastFlowId,
+      //   dataWebhook: null,
+      //   details: "",
+      //   hashWebhookId: "",
+      //   pressKey: body,
+      //   idTicket: ticketUpdate.id,
+      //   numberPhrase: mountDataContact
+      // };
+      // worker.postMessage(data);
+      // worker.on("message", message => {
+      //   console.log(`Mensagem do worker: ${message}`);
+      // });
+
+      await ActionsWebhookService(
+        whatsapp.id,
+        parseInt(ticket.flowStopped),
+        ticket.companyId,
+        nodes,
+        connections,
+        ticket.lastFlowId,
+        null,
+        "",
+        "",
+        body,
+        ticket.id,
+        mountDataContact,
+        msg
+      );
+    }
+  }
+  } finally {
+    if (shouldReleaseWelcomeLock) {
+      await releaseTicketWelcomeLock(ticket.id);
+    }
+  }
+};
+export const handleMessageIntegration = async (
+  msg: proto.IWebMessageInfo,
+  wbot: Session,
+  companyId: number,
+  queueIntegration: QueueIntegrations,
+  ticket: Ticket,
+  isMenu: boolean,
+  whatsapp: Whatsapp,
+  contact: Contact,
+  isFirstMsg: Ticket | null
+): Promise<void> => {
+  const msgType = getTypeMessage(msg);
+
+  if (queueIntegration.type === "n8n" || queueIntegration.type === "webhook") {
+    if (queueIntegration?.urlN8N) {
+      const options = {
+        method: "POST",
+        url: queueIntegration?.urlN8N,
+        headers: {
+          "Content-Type": "application/json"
+        },
+        json: msg
+      };
+      try {
+        request(options, function (error, response) {
+          if (error) {
+            throw new Error(error);
+          } else {
+            console.log(response.body);
+          }
+        });
+      } catch (error) {
+        throw new Error(error);
+      }
+    }
+  } else if (queueIntegration.type === "dialogflow") {
+    let inputAudio: string | undefined;
+
+    if (msgType === "audioMessage") {
+      let filename = `${msg.messageTimestamp}.ogg`;
+      try {
+        inputAudio = await readFile(
+          join(
+            __dirname,
+            "..",
+            "..",
+            "..",
+            "public",
+            `company${companyId}`,
+            filename
+          ),
+          "base64"
+        );
+      } catch (err) {
+        logger.error(err);
+        inputAudio = undefined;
+      }
+    } else {
+      inputAudio = undefined;
+    }
+
+    const debouncedSentMessage = debounce(
+      async () => {
+        await sendDialogflowAwswer(
+          wbot,
+          ticket,
+          msg as WAMessage,
+          ticket.contact,
+          inputAudio,
+          companyId,
+          queueIntegration
+        );
+      },
+      500,
+      ticket.id
+    );
+    debouncedSentMessage();
+  } else if (queueIntegration.type === "typebot") {
+  // 🔒 LOCK TYPEBOT PARA EVITAR DUPLICATAS usando o ID numérico do ticket
+  const lockAcquired = await acquireTicketWelcomeLock(ticket.id);
+
+  if (!lockAcquired) {
+    console.log(`🔒 TYPEBOT LOCK - Ticket ${ticket.id} já processando`);
+    return;
+  }
+
+  try {
+    await typebotListener({
+       ticket,
+       msg: { ...msg, key: { ...msg.key, remoteJid: resolveRemoteJid(msg, ticket) } },
+       wbot,
+       typebot: queueIntegration
+     });
+  } finally {
+    // Libera lock usando o ID numérico
+    await releaseTicketWelcomeLock(ticket.id);
+  }
+}
+  
+  else if (queueIntegration.type === "flowbuilder") {
+    if (contact.disableBot) {
+      return;
+    }
+
+    if (!isMenu) {
+      const integrations = await ShowQueueIntegrationService(
+        whatsapp.integrationId,
+        companyId
+      );
+      await flowbuilderIntegration(
+  msg,
+  wbot,
+  companyId,
+  integrations,
+  ticket,
+  contact,
+  isFirstMsg,
+  false
+);
+    } else {
+      const body = (getBodyMessage(msg) || "").trim();
+      if (
+        body.length > 0 &&
+        ticket.status !== "open" &&
+        ticket.status !== "closed"
+      ) {
+        await flowBuilderQueue(
+          ticket,
+          msg,
+          wbot,
+          whatsapp,
+          companyId,
+          contact,
+          isFirstMsg
+        );
+      }
+    }
+  }
+};
+
+const flowBuilderQueue = async (
+  ticket: Ticket,
+  msg: proto.IWebMessageInfo,
+  wbot: Session,
+  whatsapp: Whatsapp,
+  companyId: number,
+  contact: Contact,
+  isFirstMsg: Ticket
+) => {
+  const body = getBodyMessage(msg);
+
+  const { data: flow } = await supabase.from("flow_builders").select("*").eq("id", ticket.flowStopped).maybeSingle();
+
+  const mountDataContact = {
+    number: contact.number,
+    name: contact.name,
+    email: contact.email
+  };
+
+  const nodes: INodes[] = flow.flow["nodes"];
+  const connections: IConnections[] = flow.flow["connections"];
+
+  if (!ticket.lastFlowId) {
+    return;
+  }
+
+  if (
+    ticket.status === "closed" ||
+    ticket.status === "interrupted" ||
+    ticket.status === "open"
+  ) {
+    return;
+  }
+
+  await ActionsWebhookService(
+    whatsapp.id,
+    parseInt(ticket.flowStopped),
+    ticket.companyId,
+    nodes,
+    connections,
+    ticket.lastFlowId,
+    null,
+    "",
+    "",
+    body,
+    ticket.id,
+    mountDataContact,
+    msg
+  );
+
+  //const integrations = await ShowQueueIntegrationService(whatsapp.integrationId, companyId);
+  //await handleMessageIntegration(msg, wbot, companyId, integrations, ticket, contact, isFirstMsg)
+};
+
+const handleMessage = async (
+  msg: proto.IWebMessageInfo,
+  wbot: Session,
+  companyId: number | string,
+  isImported: boolean = false
+): Promise<void> => {
+  console.log("log... 2874");
+
+  if (!isValidMsg(msg)) {
+    console.log("log... 2877");
+    return;
+  }
+
+  try {
+    let msgContact: IMe;
+    let groupContact: Contact | undefined;
+    let queueId: number = null;
+    let tagsId: number = null;
+    let userId: number = null;
+
+    let bodyMessage = getBodyMessage(msg);
+    const msgType = getTypeMessage(msg);
+
+    console.log("log... 2891");
+
+    const hasMedia =
+      msg.message?.imageMessage ||
+      msg.message?.audioMessage ||
+      msg.message?.videoMessage ||
+      msg.message?.stickerMessage ||
+      msg.message?.documentMessage ||
+      msg.message?.documentWithCaptionMessage?.message?.documentMessage ||
+      // msg.message?.extendedTextMessage?.contextInfo?.quotedMessage?.imageMessage ||
+      // msg.message?.extendedTextMessage?.contextInfo?.quotedMessage?.videoMessage ||
+      // msg.message?.extendedTextMessage?.contextInfo?.quotedMessage?.audioMessage ||
+      msg.message?.ephemeralMessage?.message?.audioMessage ||
+      msg.message?.ephemeralMessage?.message?.documentMessage ||
+      msg.message?.ephemeralMessage?.message?.videoMessage ||
+      msg.message?.ephemeralMessage?.message?.stickerMessage ||
+      msg.message?.ephemeralMessage?.message?.imageMessage ||
+      msg.message?.viewOnceMessage?.message?.imageMessage ||
+      msg.message?.viewOnceMessage?.message?.videoMessage ||
+      msg.message?.ephemeralMessage?.message?.viewOnceMessage?.message
+        ?.imageMessage ||
+      msg.message?.ephemeralMessage?.message?.viewOnceMessage?.message
+        ?.videoMessage ||
+      msg.message?.ephemeralMessage?.message?.viewOnceMessage?.message
+        ?.audioMessage ||
+      msg.message?.ephemeralMessage?.message?.viewOnceMessage?.message
+        ?.documentMessage ||
+      msg.message?.documentWithCaptionMessage?.message?.documentMessage ||
+      msg.message?.templateMessage?.hydratedTemplate?.imageMessage ||
+      msg.message?.templateMessage?.hydratedTemplate?.documentMessage ||
+      msg.message?.templateMessage?.hydratedTemplate?.videoMessage ||
+      msg.message?.templateMessage?.hydratedFourRowTemplate?.imageMessage ||
+      msg.message?.templateMessage?.hydratedFourRowTemplate?.documentMessage ||
+      msg.message?.templateMessage?.hydratedFourRowTemplate?.videoMessage ||
+      msg.message?.templateMessage?.fourRowTemplate?.imageMessage ||
+      msg.message?.templateMessage?.fourRowTemplate?.documentMessage ||
+      msg.message?.templateMessage?.fourRowTemplate?.videoMessage ||
+      msg.message?.interactiveMessage?.header?.imageMessage ||
+      msg.message?.interactiveMessage?.header?.documentMessage ||
+      msg.message?.interactiveMessage?.header?.videoMessage ||
+      msg.message?.highlyStructuredMessage?.hydratedHsm?.hydratedTemplate
+        ?.documentMessage ||
+      msg.message?.highlyStructuredMessage?.hydratedHsm?.hydratedTemplate
+        ?.videoMessage ||
+      msg.message?.highlyStructuredMessage?.hydratedHsm?.hydratedTemplate
+        ?.imageMessage ||
+      msg.message?.highlyStructuredMessage?.hydratedHsm?.hydratedTemplate
+        ?.locationMessage;
+
+    if (msg.key.fromMe) {
+      if (/\u200e/.test(bodyMessage)) return;
+
+      console.log("log... 2935");
+
+      if (
+        !hasMedia &&
+        msgType !== "conversation" &&
+        msgType !== "extendedTextMessage" &&
+        msgType !== "contactMessage" &&
+        msgType !== "locationMessage" &&
+        msgType !== "liveLocationMessage" &&
+        msgType !== "reactionMessage" &&
+        msgType !== "ephemeralMessage" &&
+        msgType !== "protocolMessage" &&
+        msgType !== "viewOnceMessage" &&
+        msgType !== "editedMessage" &&
+        msgType !== "hydratedContentText"
+      )
+        return;
+      console.log("log... 2950");
+      msgContact = await getContactMessage(msg, wbot);
+    } else {
+      console.log("log... 2953");
+      msgContact = await getContactMessage(msg, wbot);
+    }
+
+    const isGroup = msg.key.remoteJid?.endsWith("@g.us");
+
+    const whatsapp = await ShowWhatsAppService(wbot.id!, companyId);
+
+    console.log("log... 2961");
+
+    if (!whatsapp.allowGroup && isGroup) {
+      logger.warn(
+        `[GROUP] allowGroup=false na conexão ${whatsapp.id}, mas a mensagem de grupo será processada para evitar perda de eventos.`
+      );
+    }
+
+    if (isGroup) {
+      console.log("log... 2966");
+      const grupoMeta = await wbot.groupMetadata(msg.key.remoteJid);
+      const msgGroupContact = {
+        id: grupoMeta.id,
+        name: grupoMeta.subject
+      };
+      groupContact = await verifyContact(msgGroupContact, wbot, companyId);
+    }
+
+    const contact = await verifyContact(msgContact, wbot, companyId);
+
+    let unreadMessages = 0;
+
+    if (msg.key.fromMe) {
+      console.log("log... 2980");
+      await cacheLayer.set(`contacts:${contact.id}:unreads`, "0");
+    } else {
+      console.log("log... 2983");
+      const unreads = await cacheLayer.get(`contacts:${contact.id}:unreads`);
+      unreadMessages = +unreads + 1;
+      await cacheLayer.set(
+        `contacts:${contact.id}:unreads`,
+        `${unreadMessages}`
+      );
+    }
+
+    const { data: settingsData } = await supabase
+      .from("companies_settings")
+      .select("*")
+      .eq("company_id", companyId);
+    
+    const settings: any = settingsData?.reduce((acc, s) => ({ ...acc, [s.key]: s.value }), {}) || {};
+
+
+    const enableLGPD = settings.enableLGPD === "enabled";
+
+    const { data: lastTicket } = await supabase
+      .from("tickets")
+      .select("*")
+      .eq("contact_id", groupContact ? groupContact.id : contact.id)
+      .eq("company_id", companyId)
+      .eq("whatsapp_id", whatsapp.id)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    
+    const isFirstMsg = lastTicket;
+
+
+    // SE EXISTIR UM TICKET ANTERIOR, TENTA TRATAR A MENSAGEM COMO NPS PRIMEIRO
+    if (lastTicket) {
+      const plainText = getTextFromBaileysMsg(msg as any);
+      const npsHandled = await HandleNpsReplyService({
+        ticket: lastTicket,
+        companyId: lastTicket.companyId, // <--- CORREÇÃO FINAL
+        text: plainText
+      });
+      // SE A MENSAGEM FOI TRATADA COM SUCESSO COMO NPS, INTERROMPE O FLUXO AQUI
+      if (npsHandled) {
+        return;
+      }
+    }
+
+    // SE NÃO FOR UMA RESPOSTA DE NPS, CONTINUA O FLUXO NORMAL DE ABERTURA/REABERTURA DE TICKET
+    const mutex = new Mutex();
+    const ticket = await mutex.runExclusive(async () => {
+      const result = await FindOrCreateTicketService(
+        contact,
+        whatsapp,
+        unreadMessages,
+        companyId,
+        queueId,
+        userId,
+        groupContact,
+        "whatsapp",
+        isImported,
+        false,
+        settings
+      );
+      return result;
+    });
+
+    // Quando o ticket foi criado previamente pelo placeholder CTWA e ainda não possui mensagens,
+    // a primeira mensagem "sintética" deve ser tratada como início de fluxo.
+    const { count: ticketMessagesCount } = await supabase
+      .from("messages")
+      .select("*", { count: "exact", head: true })
+      .eq("ticket_id", ticket.id)
+      .eq("company_id", companyId);
+
+    const effectiveIsFirstMsg = ticketMessagesCount > 0 ? isFirstMsg : null;
+
+    let bodyRollbackTag = "";
+    let bodyNextTag = "";
+    let rollbackTag;
+    let nextTag;
+    let ticketTag = undefined;
+    // console.log(ticket.id)
+    if (ticket?.company?.plan?.useKanban) {
+      const { data: ticketTagData } = await supabase
+        .from("ticket_tags")
+        .select("*, tag:tags(*)")
+        .eq("ticket_id", ticket.id)
+        .maybeSingle();
+      
+      ticketTag = ticketTagData;
+
+      if (ticketTag && ticketTag.tag) {
+        const tag = ticketTag.tag;
+        console.log("log... 3033");
+        if (tag.next_lane_id) {
+          const { data: nTag } = await supabase.from("tags").select("*").eq("id", tag.next_lane_id).maybeSingle();
+          nextTag = nTag;
+          bodyNextTag = nextTag?.greeting_message_lane;
+        }
+        if (tag.rollback_lane_id) {
+          const { data: rTag } = await supabase.from("tags").select("*").eq("id", tag.rollback_lane_id).maybeSingle();
+          rollbackTag = rTag;
+          bodyRollbackTag = rollbackTag?.greeting_message_lane;
+        }
+      }
+    }
+
+
+    if (
+      ticket.status === "closed" ||
+      (unreadMessages === 0 &&
+        whatsapp.complationMessage &&
+        formatBody(whatsapp.complationMessage, ticket) === bodyMessage)
+    ) {
+      return;
+    }
+
+    if (
+      rollbackTag &&
+      formatBody(bodyNextTag, ticket) !== bodyMessage &&
+      formatBody(bodyRollbackTag, ticket) !== bodyMessage
+    ) {
+      await supabase.from("ticket_tags").delete().eq("ticket_id", ticket.id).eq("tag_id", ticketTag.tag_id);
+      await supabase.from("ticket_tags").insert({ ticket_id: ticket.id, tag_id: rollbackTag.id });
+
+    }
+
+    if (isImported) {
+      console.log("log... 3063");
+      await UpdateTicketService({
+        ticketData: { queueId: whatsapp.queue_id_import_messages },
+        ticketId: ticket.id,
+        companyId
+      });
+
+    }
+
+    // console.log(msg.message?.editedMessage)
+    // console.log(ticket)
+    if (msgType === "editedMessage" || msgType === "protocolMessage") {
+      const msgKeyIdEdited =
+        msgType === "editedMessage"
+          ? msg.message.editedMessage.message.protocolMessage.key.id
+          : msg.message?.protocolMessage.key.id;
+      let bodyEdited = findCaption(msg.message);
+
+      console.log("log... 3075");
+
+      // console.log("bodyEdited", bodyEdited)
+      const io = getIO();
+      try {
+        const { data: messageToUpdate } = await supabase
+          .from("messages")
+          .select("*")
+          .eq("message_id", msgKeyIdEdited)
+          .eq("company_id", companyId)
+          .eq("ticket_id", ticket.id)
+          .maybeSingle();
+
+        if (!messageToUpdate) return;
+
+        await supabase
+          .from("messages")
+          .update({ is_edited: true, body: bodyEdited })
+          .eq("id", messageToUpdate.id);
+
+        await UpdateTicketService({
+          ticketData: { lastMessage: bodyEdited },
+          ticketId: ticket.id,
+          companyId
+        });
+
+
+        console.log("log... 3094");
+
+        io.of(String(companyId))
+          // .to(String(ticket.id))
+          .emit(`company-${companyId}-appMessage`, {
+            action: "update",
+            message: messageToUpdate
+          });
+
+        io.of(String(companyId))
+          // .to(ticket.status)
+          // .to("notification")
+          // .to(String(ticket.id))
+          .emit(`company-${companyId}-ticket`, {
+            action: "update",
+            ticket
+          });
+      } catch (err) {
+        Sentry.captureException(err);
+        logger.error(`Error handling message ack. Err: ${err}`);
+      }
+      return;
+    }
+
+    const ticketTraking = await FindOrCreateATicketTrakingService({
+      ticketId: ticket.id,
+      companyId,
+      userId,
+      whatsappId: whatsapp?.id
+    });
+
+    let useLGPD = false;
+
+    try {
+      if (!msg.key.fromMe) {
+        //MENSAGEM DE FÉRIAS COLETIVAS
+
+        console.log("log... 3131");
+
+        if (!isNil(whatsapp.collectiveVacationMessage && !isGroup)) {
+          const currentDate = moment();
+
+          console.log("log... 3136");
+
+          if (
+            currentDate.isBetween(
+              moment(whatsapp.collectiveVacationStart),
+              moment(whatsapp.collectiveVacationEnd)
+            )
+          ) {
+            console.log("log... 3140");
+
+            if (hasMedia) {
+              console.log("log... 3144");
+
+              await verifyMediaMessage(
+                msg,
+                ticket,
+                contact,
+                ticketTraking,
+                false,
+                false,
+                wbot
+              );
+            } else {
+              console.log("log... 3148");
+              await verifyMessage(msg, ticket, contact, ticketTraking);
+            }
+
+            console.log("log... 3152");
+            wbot.sendMessage(contact.remoteJid, {
+              text: whatsapp.collectiveVacationMessage
+            });
+
+            return;
+          }
+        }
+      }
+    } catch (e) {
+      Sentry.captureException(e);
+      console.log(e);
+    }
+
+    const isMsgForwarded =
+      msg.message?.extendedTextMessage?.contextInfo?.isForwarded ||
+      msg.message?.imageMessage?.contextInfo?.isForwarded ||
+      msg.message?.audioMessage?.contextInfo?.isForwarded ||
+      msg.message?.videoMessage?.contextInfo?.isForwarded ||
+      msg.message?.documentMessage?.contextInfo?.isForwarded;
+
+    let mediaSent: Message | undefined;
+
+    if (!useLGPD) {
+      console.log("log... 3391");
+      if (hasMedia) {
+        console.log("log... 3393");
+        mediaSent = await verifyMediaMessage(
+          msg,
+          ticket,
+          contact,
+          ticketTraking,
+          isMsgForwarded,
+          false,
+          wbot
+        );
+      } else {
+        console.log("log... 3396");
+        // console.log("antes do verifyMessage")
+        await verifyMessage(
+          msg,
+          ticket,
+          contact,
+          ticketTraking,
+          false,
+          isMsgForwarded
+        );
+      }
+    }
+
+    try {
+      if (!msg.key.fromMe) {
+        console.log("log... 3226");
+        console.log("log... 3227", { ticketTraking});
+        if (ticketTraking !== null && verifyRating(ticketTraking)) {
+          handleRating(parseFloat(bodyMessage), ticket, ticketTraking);
+          return;
+        }
+      }
+    } catch (e) {
+      Sentry.captureException(e);
+      console.log(e);
+    }
+    
+    // Atualiza o ticket se a ultima mensagem foi enviada por mim, para que possa ser finalizado.
+    try {
+      console.log("log... 3258");
+      await supabase.from("tickets").update({
+        from_me: msg.key.fromMe
+      , updated_at: new Date().toISOString()}).eq("id", ticket.id);
+    } catch (e) {
+      Sentry.captureException(e);
+      console.log(e);
+    }
+
+    let currentSchedule;
+
+    if (settings.scheduleType === "company") {
+      console.log("log... 3270");
+      currentSchedule = await VerifyCurrentSchedule(companyId, 0, 0);
+    } else if (settings.scheduleType === "connection") {
+      console.log("log... 3273");
+      currentSchedule = await VerifyCurrentSchedule(companyId, 0, whatsapp.id);
+    }
+
+    try {
+  if (
+    !msg.key.fromMe &&
+    settings.scheduleType &&
+    (!ticket.isGroup || whatsapp.groupAsTicket === "enabled") &&
+    !["open", "group"].includes(ticket.status)
+  ) {
+    /**
+     * Tratamento para envio de mensagem quando a empresa está fora do expediente
+     */
+    console.log("log... 3280");
+    if (
+      (settings.scheduleType === "company" ||
+        settings.scheduleType === "connection") &&
+      !isNil(currentSchedule) &&
+      (!currentSchedule || currentSchedule.inActivity === false)
+    ) {
+      console.log("log... 3289");
+
+      // 🔁 Limite de repetições da mensagem fora de expediente
+      // (use whatsapp.maxUseBotQueues configurado na conexão ou “4” como padrão)
+      const maxRepeats =
+        whatsapp.maxUseBotQueues && whatsapp.maxUseBotQueues > 0
+          ? whatsapp.maxUseBotQueues
+          : 4;
+
+      if (ticket.amountUsedBotQueues >= maxRepeats) {
+        // Já repetiu a mensagem o máximo de vezes -> só não responde mais
+        return;
+      }
+
+      if (whatsapp.timeUseBotQueues !== "0") {
+        console.log("log... 3300");
+        if (
+          ticket.isOutOfHour === false &&
+          ticketTraking.chatbotAt !== null
+        ) {
+          console.log("log... 3302");
+          await supabase.from("ticket_trackings").update({ chatbot_at: null }).eq("id", ticketTraking.id);
+          await UpdateTicketService({
+          ticketData: { amountUsedBotQueues: 0 },
+          ticketId: ticket.id,
+          companyId
+        });
+        }
+
+        //Regra para desabilitar o chatbot por x minutos/horas após o primeiro envio
+        let dataLimite = new Date();
+        let Agora = new Date();
+
+        if (ticketTraking.chatbotAt !== null) {
+          dataLimite.setMinutes(
+            ticketTraking.chatbotAt.getMinutes() +
+              Number(whatsapp.timeUseBotQueues)
+          );
+          console.log("log... 3318");
+          if (
+            ticketTraking.chatbotAt !== null &&
+            Agora < dataLimite &&
+            whatsapp.timeUseBotQueues !== "0" &&
+            ticket.amountUsedBotQueues !== 0
+          ) {
+            // ainda dentro da janela de bloqueio -> não responde
+            return;
+          }
+        }
+
+        await supabase.from("ticket_trackings").update({ chatbot_at: null }).eq("id", ticketTraking.id);
+      }
+
+      // 💬 NOVO: mensagem de fora de expediente configurada na conexão
+      // 👉 Troque "outOfHoursMessage" pelo nome EXATO do campo na tabela Whatsapp, se for diferente
+      if (whatsapp.outOfHoursMessage && !ticket.isGroup) {
+        const body = formatBody(`${whatsapp.outOfHoursMessage}`, ticket);
+
+        const debouncedSentMessage = debounce(
+          async () => {
+            await wbot.sendMessage(
+              `${contact.number}@${
+                ticket.isGroup ? "g.us" : "s.whatsapp.net"
+              }`,
+              {
+                text: body
+              }
+            );
+          },
+          1000,
+          ticket.id
+        );
+
+        debouncedSentMessage();
+      }
+
+      // Marca que foi fora de expediente e incrementa o contador de repetições
+      await UpdateTicketService({
+          ticketData: {
+            isOutOfHour: true,
+            amountUsedBotQueues: (ticket.amountUsedBotQueues || 0) + 1
+          },
+          ticketId: ticket.id,
+          companyId
+        });
+
+      return;
+    }
+  }
+} catch (e) {
+  Sentry.captureException(e);
+  console.log(e);
+}
+
+    const { data: flow } = await supabase.from("flow_builders").select("*").eq("id", ticket.flowStopped).maybeSingle();
+
+    let isMenu = false;
+    let isOpenai = false;
+    let isQuestion = false;
+
+    if (flow) {
+      isMenu =
+        flow.flow["nodes"].find((node: any) => node.id === ticket.lastFlowId)
+          ?.type === "menu";
+      isOpenai =
+        flow.flow["nodes"].find((node: any) => node.id === ticket.lastFlowId)
+          ?.type === "openai";
+      isQuestion =
+        flow.flow["nodes"].find((node: any) => node.id === ticket.lastFlowId)
+          ?.type === "question";
+    }
+
+    if (!isNil(flow) && isQuestion && !msg.key.fromMe) {
+      console.log(
+        "|============= QUESTION =============|",
+        JSON.stringify(flow, null, 4)
+      );
+      const body = getBodyMessage(msg);
+      if (body) {
+        const nodes: INodes[] = flow.flow["nodes"];
+        const nodeSelected = flow.flow["nodes"].find(
+          (node: any) => node.id === ticket.lastFlowId
+        );
+
+        const connections: IConnections[] = flow.flow["connections"];
+
+        const { answerKey } = nodeSelected.data.typebotIntegration;
+        const oldDataWebhook = (ticket.dataWebhook || {}) as {
+          variables?: Record<string, unknown>;
+          [key: string]: unknown;
+        };
+        const nextConnection = connections.find(
+          connection => connection.source === nodeSelected.id
+        );
+        const lastFlowId = nextConnection?.target;
+
+        if (!lastFlowId) {
+          await supabase.from("tickets").update({
+            data_webhook: {
+              ...oldDataWebhook,
+              variables: {
+                ...(oldDataWebhook?.variables || {, updated_at: new Date().toISOString()}).eq("id", ticket.id);,
+                [answerKey]: body
+              }
+            }
+          });
+          await ticket.save();
+          return;
+        }
+
+        await supabase.from("tickets").update({
+          lastFlowId,
+          data_webhook: {
+            ...oldDataWebhook,
+            variables: {
+              ...(oldDataWebhook?.variables || {, updated_at: new Date().toISOString()}).eq("id", ticket.id);,
+              [answerKey]: body
+            }
+          }
+        });
+
+        await ticket.save();
+
+        const mountDataContact = {
+          number: contact.number,
+          name: contact.name,
+          email: contact.email
+        };
+
+        await ActionsWebhookService(
+          whatsapp.id,
+          parseInt(ticket.flowStopped),
+          ticket.companyId,
+          nodes,
+          connections,
+          lastFlowId,
+          null,
+          "",
+          "",
+          "",
+          ticket.id,
+          mountDataContact,
+          msg
+        );
+      }
+
+      return;
+    }
+
+    
+    if (isOpenai && !isNil(flow) && !ticket.queue) {
+      const nodeSelected = flow.flow["nodes"].find(
+        (node: any) => node.id === ticket.lastFlowId
+      );
+    
+      if (!nodeSelected?.data?.typebotIntegration) {
+        console.error("typebotIntegration not found in nodeSelected");
+        return;
+      }
+    
+      const {
+        name,
+        prompt,
+        voice,
+        voiceKey,
+        voiceRegion,
+        maxTokens,
+        temperature,
+        apiKey,
+        queueId,
+        maxMessages,
+        model // <- Aqui está o campo ausente
+      } = nodeSelected.data.typebotIntegration as IOpenAi;
+    
+      const openAiSettings = {
+        name,
+        prompt,
+        voice,
+        voiceKey,
+        voiceRegion,
+        maxTokens: Number(maxTokens) || 0,
+        temperature: Number(temperature) || 0,
+        apiKey,
+        queueId: Number(queueId) || 0,
+        maxMessages: Number(maxMessages) || 0,
+        model
+      };
+    
+      await handleOpenAi(
+        openAiSettings,
+        msg,
+        wbot,
+        ticket,
+        contact,
+        mediaSent,
+        ticketTraking
+      );
+    
+      return;
+    }
+    
+
+
+
+    //openai na conexao
+    if (
+      !ticket.queue &&
+      !isGroup &&
+      !msg.key.fromMe &&
+      !ticket.userId &&
+      !isNil(whatsapp.promptId)
+    ) {
+      const { prompt } = whatsapp;
+      await handleOpenAi(
+        prompt,
+        msg,
+        wbot,
+        ticket,
+        contact,
+        mediaSent,
+        ticketTraking
+      );
+    }
+
+if (
+      !isNil(ticket.typebotSessionId) &&
+      ticket.typebotStatus &&
+      !msg.key.fromMe &&
+      !isNil(ticket.typebotSessionTime) &&
+      ticket.useIntegration
+    ) {
+      console.log("|================== CONTINUE TYPEBO ==============|");
+      const { data: flow } = await supabase.from("flow_builders").select("*").eq("id", ticket.flowStopped).maybeSingle();
+      const nodes: INodes[] = flow.flow["nodes"];
+      const lastFlow = nodes.find(f => f.id === ticket.lastFlowId);
+      const typebot = lastFlow.data.typebotIntegration;
+
+      await typebotListener({
+        wbot: wbot,
+        msg,
+        ticket,
+        typebot: lastFlow.data.typebotIntegration
+      });
+      return;
+    }
+
+    //integraçao na conexao
+    if (
+      !ticket.imported &&
+      !msg.key.fromMe &&
+      !ticket.isGroup &&
+      !ticket.queue &&
+      !ticket.user &&
+      ticket.isBot &&
+      !isNil(whatsapp.integrationId) &&
+      !ticket.useIntegration
+    ) {
+      console.log("3245");
+      const integrations = await ShowQueueIntegrationService(
+        whatsapp.integrationId,
+        companyId
+      );
+
+      await handleMessageIntegration(
+        msg,
+        wbot,
+        companyId,
+        integrations,
+        ticket,
+        isMenu,
+        whatsapp,
+        contact,
+        effectiveIsFirstMsg
+      );
+      return;
+    }
+
+    // integração flowbuilder
+    if (
+      !ticket.imported &&
+      !msg.key.fromMe &&
+      !ticket.isGroup &&
+      !ticket.queue &&
+      !ticket.user &&
+      !isNil(whatsapp.integrationId) &&
+      !ticket.useIntegration
+    ) {
+
+      const integrations = await ShowQueueIntegrationService(
+        whatsapp.integrationId,
+        companyId
+      );
+      await handleMessageIntegration(
+        msg,
+        wbot,
+        companyId,
+        integrations,
+        ticket,
+        isMenu,
+        whatsapp,
+        contact,
+        effectiveIsFirstMsg
+      );
+    }
+
+    if (
+      !ticket.imported &&
+      !msg.key.fromMe &&
+      !ticket.isGroup &&
+      !ticket.userId &&
+      ticket.integrationId &&
+      ticket.useIntegration
+    ) {
+      const integrations = await ShowQueueIntegrationService(
+        ticket.integrationId,
+        companyId
+      );
+
+      console.log("3264");
+      console.log("3257", { ticket });
+      await handleMessageIntegration(
+        msg,
+        wbot,
+        companyId,
+        integrations,
+        ticket,
+        null,
+        null,
+        contact,
+        null
+      );
+
+      if (msg.key.fromMe) {
+        await supabase.from("tickets").update({
+          typebot_session_time: moment().toDate()
+        , updated_at: new Date().toISOString()}).eq("id", ticket.id);
+      }
+    }
+
+    if (
+      !ticket.imported &&
+      !ticket.queue &&
+      (!ticket.isGroup || whatsapp.groupAsTicket === "enabled") &&
+      !msg.key.fromMe &&
+      !ticket.userId &&
+      whatsapp.queues.length >= 1 &&
+      !ticket.useIntegration
+    ) {
+      // console.log("antes do verifyqueue")
+      await verifyQueue(wbot, msg, ticket, contact, settings, ticketTraking);
+
+      if (ticketTraking.chatbotAt === null) {
+        await supabase.from("ticket_trackings").update({
+          chatbot_at: moment().toDate()
+        , updated_at: new Date().toISOString()}).eq("id", ticketTraking.id);
+      }
+    }
+
+    if (ticket.queueId > 0) {
+      await supabase.from("ticket_trackings").update({
+        queue_id: ticket.queueId
+      , updated_at: new Date().toISOString()}).eq("id", ticketTraking.id);
+    }
+
+    // Verificação se aceita audio do contato
+    if (
+      getTypeMessage(msg) === "audioMessage" &&
+      !msg.key.fromMe &&
+      (!ticket.isGroup || whatsapp.groupAsTicket === "enabled") &&
+      (!contact?.acceptAudioMessage ||
+        settings?.acceptAudioMessageContact === "disabled")
+    ) {
+      const sentMessage = await wbot.sendMessage(
+        `${contact.number}@c.us`,
+        {
+          text: `\u200e*Assistente Virtual*:\nInfelizmente não conseguimos escutar nem enviar áudios por este canal de atendimento, por favor, envie uma mensagem de *texto*.`
+        },
+        {
+          quoted: {
+            key: msg.key,
+            message: {
+              extendedTextMessage: msg.message.extendedTextMessage
+            }
+          }
+        }
+      );
+      await verifyMessage(sentMessage, ticket, contact, ticketTraking);
+    }
+
+    try {
+      if (
+        !msg.key.fromMe &&
+        settings?.scheduleType &&
+        ticket.queueId !== null &&
+        (!ticket.isGroup || whatsapp.groupAsTicket === "enabled") &&
+        ticket.status !== "open"
+      ) {
+        /**
+         * Tratamento para envio de mensagem quando a empresa/fila está fora do expediente
+         */
+        const queue = await supabase.from("queues").select("*").eq("id", ticket.queueId).maybeSingle().then(res => res.data ? { ...res.data, outOfHoursMessage: res.data.out_of_hours_message, greetingMessage: res.data.greeting_message } : null)
+
+        if (settings?.scheduleType === "queue") {
+          currentSchedule = await VerifyCurrentSchedule(companyId, queue.id, 0);
+        }
+
+        if (
+          settings?.scheduleType === "queue" &&
+          !isNil(currentSchedule) &&
+          ticket.amountUsedBotQueues < whatsapp.maxUseBotQueues &&
+          (!currentSchedule || currentSchedule.inActivity === false) &&
+          !ticket.imported
+        ) {
+          if (Number(whatsapp.timeUseBotQueues) > 0) {
+            if (
+              ticket.isOutOfHour === false &&
+              ticketTraking.chatbotAt !== null
+            ) {
+              await supabase.from("ticket_trackings").update({
+                chatbot_at: null
+              , updated_at: new Date().toISOString()}).eq("id", ticketTraking.id);
+              await supabase.from("tickets").update({
+                amount_used_bot_queues: 0
+              , updated_at: new Date().toISOString()}).eq("id", ticket.id);
+            }
+
+            //Regra para desabilitar o chatbot por x minutos/horas após o primeiro envio
+            let dataLimite = new Date();
+            let Agora = new Date();
+
+            if (ticketTraking.chatbotAt !== null) {
+              dataLimite.setMinutes(
+                ticketTraking.chatbotAt.getMinutes() +
+                  Number(whatsapp.timeUseBotQueues)
+              );
+
+              if (
+                ticketTraking.chatbotAt !== null &&
+                Agora < dataLimite &&
+                whatsapp.timeUseBotQueues !== "0" &&
+                ticket.amountUsedBotQueues !== 0
+              ) {
+                return;
+              }
+            }
+
+            await supabase.from("ticket_trackings").update({
+              chatbot_at: null
+            , updated_at: new Date().toISOString()}).eq("id", ticketTraking.id);
+          }
+
+          const outOfHoursMessage = queue.outOfHoursMessage;
+
+          if (outOfHoursMessage !== "") {
+            // console.log("entrei2");
+            const body = formatBody(`${outOfHoursMessage}`, ticket);
+
+            const debouncedSentMessage = debounce(
+              async () => {
+                await wbot.sendMessage(
+                  `${ticket.contact.number}@${
+                    ticket.isGroup ? "g.us" : "s.whatsapp.net"
+                  }`,
+                  {
+                    text: body
+                  }
+                );
+              },
+              1000,
+              ticket.id
+            );
+            debouncedSentMessage();
+          }
+          //atualiza o contador de vezes que enviou o bot e que foi enviado fora de hora
+          await supabase.from("tickets").update({
+            is_out_of_hour: true,
+            amount_used_bot_queues: ticket.amountUsedBotQueues + 1
+          , updated_at: new Date().toISOString()}).eq("id", ticket.id);
+          return;
+        }
+      }
+    } catch (e) {
+      Sentry.captureException(e);
+      console.log(e);
+    }
+
+    if (ticket.queue && ticket.queueId && !msg.key.fromMe) {
+      if (!ticket.user || ticket.queue?.chatbots?.length > 0) {
+        await sayChatbot(
+          ticket.queueId,
+          wbot,
+          ticket,
+          contact,
+          msg,
+          ticketTraking
+        );
+      }
+
+      //atualiza mensagem para indicar que houve atividade e aí contar o tempo novamente para enviar mensagem de inatividade
+      await supabase.from("tickets").update({
+        send_inactive_message: false
+      , updated_at: new Date().toISOString()}).eq("id", ticket.id);
+    }
+
+    await ticket.reload();
+  } catch (err) {
+    Sentry.captureException(err);
+    console.log(err);
+    logger.error(`Error handling whatsapp message: Err: ${err}`);
+  }
+};
+const handleMsgAck = async (
+  msg: WAMessage,
+  chat: number | null | undefined
+) => {
+  await new Promise(r => setTimeout(r, 500));
+
+  try {
+    const { data: messageToUpdate } = await supabase
+      .from("messages")
+      .select("*")
+      .eq("message_id", msg.key.id)
+      .maybeSingle();
+
+    if (!messageToUpdate || (chat !== null && chat !== undefined && messageToUpdate.ack > chat)) return;
+
+    const nextAck = typeof chat === "number"
+      ? Math.max(Number(messageToUpdate.ack ?? 0), chat)
+      : Number(messageToUpdate.ack ?? 0);
+
+    if (nextAck !== messageToUpdate.ack) {
+      await supabase
+        .from("messages")
+        .update({ ack: nextAck })
+        .eq("id", messageToUpdate.id);
+
+      // recarrega a mensagem completa via serviço já migrado
+      const fullMessage = await ShowMessageService(msg.key.id);
+
+      emitAppMessage(messageToUpdate.company_id, messageToUpdate.ticket_id, {
+        action: "update",
+        message: fullMessage,
+        ticket: fullMessage?.ticket,
+        contact: fullMessage?.ticket?.contact
+      });
+    }
+  } catch (err) {
+    Sentry.captureException(err);
+    logger.error(`Error handling message ack. Err: ${err}`);
+  }
+};
+
+
+const verifyRecentCampaign = async (
+  message: proto.IWebMessageInfo,
+  companyId: number
+) => {
+  if (!isValidMsg(message)) {
+    return;
+  }
+  if (!message.key.fromMe) {
+    const number = message.key.remoteJid.replace(/\D/g, "");
+    const { data: campaigns } = await supabase
+      .from("campaigns")
+      .select("id")
+      .eq("company_id", companyId)
+      .eq("status", "EM_ANDAMENTO")
+      .eq("confirmation", true);
+
+    if (campaigns && campaigns.length > 0) {
+      const ids = campaigns.map(c => c.id);
+      const { data: campaignShipping } = await supabase
+        .from("campaign_shippings")
+        .select("*")
+        .in("campaign_id", ids)
+        .eq("number", number)
+        .is("confirmation", null)
+        .not("delivered_at", "is", null)
+        .maybeSingle();
+
+      if (campaignShipping) {
+        await supabase
+          .from("campaign_shippings")
+          .update({
+            confirmed_at: moment().toISOString(),
+            confirmation: true
+          })
+          .eq("id", campaignShipping.id);
+
+        await campaignQueue.add(
+          "DispatchCampaign",
+          {
+            campaignShippingId: campaignShipping.id,
+            campaignId: campaignShipping.campaign_id
+          },
+          {
+            delay: parseToMilliseconds(randomValue(0, 10))
+          }
+        );
+      }
+    }
+  }
+};
+
+const verifyCampaignMessageAndCloseTicket = async (
+  message: proto.IWebMessageInfo,
+  companyId: number,
+  wbot: Session
+) => {
+  if (!isValidMsg(message)) {
+    return;
+  }
+
+  const io = getIO();
+  const body = await getBodyMessage(message);
+  const isCampaign = /\u200c/.test(body);
+
+  if (message.key.fromMe && isCampaign) {
+    let msgContact: IMe;
+    msgContact = await getContactMessage(message, wbot);
+    const contact = await verifyContact(msgContact, wbot, companyId);
+
+    const { data: messageRecord } = await supabase
+      .from("messages")
+      .select("*")
+      .or(`message_id.eq.${message.key.id},contact_id.eq.${contact.id}`)
+      .eq("company_id", companyId)
+      .maybeSingle();
+
+    if (
+      !isNull(messageRecord) ||
+      !isNil(messageRecord) ||
+      messageRecord !== null
+    ) {
+      const ticket = await supabase.from("tickets").select("*").eq("id", messageRecord.ticketId).maybeSingle().then(res => res.data);
+      await UpdateTicketService({
+        ticketData: {
+          status: "closed",
+          amountUsedBotQueues: 0
+        },
+        ticketId: ticket.id,
+        companyId
+      });
+
+      io.of(String(companyId))
+        // .to("open")
+        .emit(`company-${companyId}-ticket`, {
+          action: "delete",
+          ticket,
+          ticketId: ticket.id
+        });
+
+      io.of(String(companyId))
+        // .to(ticket.status)
+        // .to(ticket.id.toString())
+        .emit(`company-${companyId}-ticket`, {
+          action: "update",
+          ticket,
+          ticketId: ticket.id
+        });
+    }
+  }
+};
+
+const filterMessages = (msg: WAMessage): boolean => {
+  msgDB.save(msg);
+
+  if (msg.message?.protocolMessage?.editedMessage) return true;
+  if (msg.message?.protocolMessage) return false;
+
+  if (
+    [
+      WAMessageStubTypeRef.REVOKE,
+      WAMessageStubTypeRef.E2E_DEVICE_CHANGED,
+      WAMessageStubTypeRef.E2E_IDENTITY_CHANGED
+    ].includes(msg.messageStubType as number) // Ou use diretamente os valores como WAMessageStubType.GROUP_PARTICIPANT_ADD, etc
+  )
+    return false;
+
+  return true;
+};
+
+type CtwaPlaceholderState = {
+  attempts: number;
+  pending: boolean;
+  fallbackAttempted?: boolean;
+  contactId?: number;
+  ticketId?: number;
+  remoteJid?: string;
+  messageId?: string;
+  lastRequestAt?: number;
+  syntheticDispatched?: boolean;
+  syntheticMessageId?: string;
+};
+
+const CTWA_RETRY_MAX = 3;
+const CTWA_RETRY_DEBOUNCE_MS = 5000;
+
+const ctwaPlaceholderCache = new NodeCache({
+  stdTTL: 60 * 20,
+  checkperiod: 60,
+  useClones: false
+});
+
+const ctwaPlaceholderByChatCache = new NodeCache({
+  stdTTL: 60 * 20,
+  checkperiod: 60,
+  useClones: false
+});
+
+const ctwaSyntheticByChatCache = new NodeCache({
+  stdTTL: 60 * 20,
+  checkperiod: 60,
+  useClones: false
+});
+
+const inboundDispatchInFlightCache = new NodeCache({
+  stdTTL: 60 * 2,
+  checkperiod: 30,
+  useClones: false
+});
+
+const ctwaRetryTimers = new Map<string, NodeJS.Timeout>();
+const ctwaSyntheticTimers = new Map<string, NodeJS.Timeout>();
+
+const getCtwaPlaceholderCacheKey = (
+  companyId: number,
+  wbot: Session,
+  msg: proto.IWebMessageInfo
+): string => {
+  const messageId = msg?.key?.id || "no-id";
+  const remoteJid = msg?.key?.remoteJid || "no-jid";
+  return `ctwa:${companyId}:${wbot?.id}:${remoteJid}:${messageId}`;
+};
+
+const getCtwaChatCacheKey = (
+  companyId: number,
+  wbot: Session,
+  msg: proto.IWebMessageInfo
+): string => {
+  const remoteJid = msg?.key?.remoteJid || "no-jid";
+  return `ctwa-chat:${companyId}:${wbot?.id}:${remoteJid}`;
+};
+
+const getStableMissingId = (
+  msg: proto.IWebMessageInfo,
+  wbot: Session,
+  remoteJid: string
+): string => {
+  const rawTs: any = msg?.messageTimestamp;
+  const tsSource =
+    rawTs && typeof rawTs === "object"
+      ? `${rawTs.high ?? ""}:${rawTs.low ?? ""}:${rawTs.unsigned ?? ""}`
+      : String(rawTs ?? "");
+  const fingerprint = {
+    remoteJid,
+    participant: msg?.key?.participant || "",
+    fromMe: !!msg?.key?.fromMe,
+    messageStubType: msg?.messageStubType || "",
+    messageStubParameters: msg?.messageStubParameters || [],
+    tsSource,
+    msgType: getTypeMessage(msg) || "",
+    hasMessage: !!msg?.message
+  };
+  const digest = createHash("sha1")
+    .update(JSON.stringify(fingerprint))
+    .digest("hex")
+    .slice(0, 16);
+
+  return `ctwa-${wbot?.id || "unknown"}-${remoteJid || "no-jid"}-${digest}`;
+};
+
+const isCtwaEligiblePrivateInbound = (msg: proto.IWebMessageInfo): boolean => {
+  const remoteJid = msg?.key?.remoteJid || "";
+  const remoteJidAlt = (msg?.key as any)?.remoteJidAlt || "";
+
+  if (!remoteJid) return false;
+  if (msg?.key?.fromMe) return false;
+  if (remoteJid === "status@broadcast") return false;
+  if (remoteJid.endsWith("@g.us")) return false;
+  if (remoteJid.endsWith("@newsletter")) return false;
+  if (remoteJid.endsWith("@broadcast")) return false;
+  const hasPrivateSuffix =
+    remoteJid.endsWith("@s.whatsapp.net") ||
+    remoteJid.endsWith("@lid") ||
+    remoteJidAlt.endsWith("@s.whatsapp.net");
+  if (!hasPrivateSuffix) return false;
+
+  return true;
+};
+
+const hasUsableInboundContent = (msg: proto.IWebMessageInfo): boolean => {
+  if (!msg?.message) return false;
+
+  const msgType = getTypeMessage(msg);
+  if (!msgType) return false;
+
+  // Eventos/updates não devem acionar CTWA.
+  if (
+    msgType === "reactionMessage" ||
+    msgType === "protocolMessage" ||
+    msgType === "editedMessage" ||
+    msgType === "senderKeyDistributionMessage" ||
+    msgType === "messageContextInfo"
+  ) {
+    return false;
+  }
+
+  const body = getBodyMessage(msg);
+  if (typeof body === "string" && body.trim().length > 0) {
+    return true;
+  }
+
+  const root = msg.message?.ephemeralMessage?.message ?? msg.message;
+  const externalAdReply =
+    root?.extendedTextMessage?.contextInfo?.externalAdReply ||
+    msg.message?.extendedTextMessage?.contextInfo?.externalAdReply;
+  if (
+    externalAdReply?.title ||
+    externalAdReply?.body ||
+    externalAdReply?.sourceUrl ||
+    externalAdReply?.thumbnail
+  ) {
+    return true;
+  }
+
+  const hasMediaLikeContent =
+    !!root?.imageMessage ||
+    !!root?.videoMessage ||
+    !!root?.audioMessage ||
+    !!root?.documentMessage ||
+    !!root?.documentWithCaptionMessage?.message?.documentMessage ||
+    !!root?.stickerMessage ||
+    !!root?.contactMessage ||
+    !!root?.contactsArrayMessage ||
+    !!root?.locationMessage ||
+    !!root?.liveLocationMessage ||
+    !!root?.buttonsMessage ||
+    !!root?.buttonsResponseMessage ||
+    !!root?.listMessage ||
+    !!root?.listResponseMessage ||
+    !!root?.interactiveMessage ||
+    !!root?.pollCreationMessageV3 ||
+    !!root?.eventMessage ||
+    !!root?.viewOnceMessage?.message ||
+    !!root?.viewOnceMessageV2?.message;
+
+  return hasMediaLikeContent;
+};
+
+const isCtwaNonDispatchEvent = (msg: proto.IWebMessageInfo): boolean => {
+  const msgType = getTypeMessage(msg);
+  return (
+    msgType === "reactionMessage" ||
+    msgType === "protocolMessage" ||
+    msgType === "editedMessage" ||
+    msgType === "senderKeyDistributionMessage" ||
+    msgType === "messageContextInfo"
+  );
+};
+
+const hasCtwaContextHint = (msg: proto.IWebMessageInfo): boolean => {
+  const msgType = getTypeMessage(msg);
+  const stubParams = msg?.messageStubParameters || [];
+  const hasStrongStubHint =
+    msgType === "placeholderMessage" ||
+    stubParams.some(param =>
+      /(absent|placeholder|incomplete|ctwa|click to whatsapp|click-to-whatsapp)/i.test(
+        String(param)
+      )
+    );
+
+  if (hasStrongStubHint) return true;
+
+  const root = msg.message?.ephemeralMessage?.message ?? msg.message;
+  const externalAdReply =
+    root?.extendedTextMessage?.contextInfo?.externalAdReply ||
+    root?.listResponseMessage?.contextInfo?.externalAdReply ||
+    msg.message?.extendedTextMessage?.contextInfo?.externalAdReply ||
+    msg.message?.listResponseMessage?.contextInfo?.externalAdReply;
+  if (externalAdReply?.sourceUrl || externalAdReply?.title || externalAdReply?.body) {
+    return true;
+  }
+
+  if (
+    msg?.messageStubType === WAMessageStubTypeRef.CIPHERTEXT &&
+    stubParams.length > 0
+  ) {
+    return true;
+  }
+
+  return false;
+};
+
+const isCtwaPlaceholderMessage = (msg: proto.IWebMessageInfo): boolean => {
+  if (!isCtwaEligiblePrivateInbound(msg)) return false;
+
+  // Exclui explicitamente eventos de sistema/ack/edits/reactions.
+  if (
+    msg?.message?.protocolMessage ||
+    msg?.message?.reactionMessage ||
+    msg?.message?.editedMessage
+  ) {
+    return false;
+  }
+
+  const msgType = getTypeMessage(msg);
+  const hasNoUsableContent =
+    !msg?.message ||
+    Object.keys(msg?.message || {}).length === 0 ||
+    !hasUsableInboundContent(msg);
+
+  if (!hasNoUsableContent) return false;
+
+  const stubParams = msg?.messageStubParameters || [];
+  const hasStrongCtwaHint =
+    msgType === "placeholderMessage" ||
+    stubParams.some(param =>
+      /(absent|placeholder|incomplete|ctwa)/i.test(String(param))
+    );
+
+  return hasStrongCtwaHint;
+};
+
+const markInboundDispatchInFlight = (
+  companyId: number,
+  wbot: Session,
+  messageId?: string | null
+): boolean => {
+  if (!messageId) return true;
+
+  const cacheKey = `inbound-dispatch:${companyId}:${wbot?.id}:${messageId}`;
+  if (inboundDispatchInFlightCache.get(cacheKey)) return false;
+
+  inboundDispatchInFlightCache.set(cacheKey, true);
+  return true;
+};
+
+const dispatchCtwaSyntheticInbound = async (
+  msg: proto.IWebMessageInfo,
+  wbot: Session,
+  companyId: number,
+  placeholderCacheKey: string
+): Promise<void> => {
+  try {
+    if (!msg?.key?.remoteJid) return;
+
+    const chatCacheKey = getCtwaChatCacheKey(companyId, wbot, msg);
+    if (ctwaSyntheticByChatCache.get(chatCacheKey)) return;
+
+    const state = (ctwaPlaceholderCache.get(
+      placeholderCacheKey
+    ) || {}) as CtwaPlaceholderState;
+    if (state.syntheticDispatched) return;
+
+    const syntheticMessageId = `ctwa-synthetic-${wbot?.id || "unknown"}-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
+
+    let canonicalRemoteJid = msg.key.remoteJid;
+    if (state.contactId) {
+      const persistedContact = await supabase.from("contacts").select("*").eq("id", state.contactId).maybeSingle().then(res => res.data);
+      const persistedNumber = String(persistedContact?.number || "").replace(/\D/g, "");
+      const persistedJid =
+        (persistedContact as any)?.jid ||
+        persistedContact?.remoteJid ||
+        null;
+
+      if (persistedJid && typeof persistedJid === "string") {
+        canonicalRemoteJid = persistedJid;
+      } else if (persistedNumber.length >= 8) {
+        canonicalRemoteJid = `${persistedNumber}@s.whatsapp.net`;
+      }
+    }
+
+    const syntheticInbound = {
+      key: {
+        ...(msg.key as any),
+        id: syntheticMessageId,
+        fromMe: false,
+        remoteJid: canonicalRemoteJid,
+        participant: msg.key.participant,
+        remoteJidAlt: (msg.key as any)?.remoteJidAlt
+      },
+      messageTimestamp: Math.floor(Date.now() / 1000),
+      message: {
+        conversation:
+          "[CTWA] Conversa iniciada através de anúncio Click to WhatsApp (Facebook/Instagram).\nDevido a limitações de compatibilidade, o conteúdo do anúncio pode ser visualizado diretamente no aplicativo oficial do WhatsApp, se necessário."
+      },
+      pushName: msg.pushName
+    } as unknown as proto.IWebMessageInfo;
+
+    ctwaPlaceholderCache.set(placeholderCacheKey, {
+      ...state,
+      syntheticDispatched: true,
+      syntheticMessageId
+    } as CtwaPlaceholderState);
+    ctwaSyntheticByChatCache.set(chatCacheKey, true);
+
+    await handleMessage(syntheticInbound, wbot, companyId);
+
+    logger.warn(
+      `[CTWA] Mensagem sintética inbound criada para acionar fluxo (ticket=${state.ticketId || "n/a"}, messageId=${syntheticMessageId}, remoteJid=${msg.key.remoteJid})`
+    );
+  } catch (error) {
+    Sentry.captureException(error);
+    logger.error(
+      `[CTWA] Falha ao gerar mensagem sintética inbound para placeholder messageId=${msg?.key?.id}: ${error}`
+    );
+  }
+};
+
+const scheduleCtwaSyntheticInbound = (
+  msg: proto.IWebMessageInfo,
+  wbot: Session,
+  companyId: number,
+  placeholderCacheKey: string
+) => {
+  if (ctwaSyntheticTimers.has(placeholderCacheKey)) return;
+
+  const timer = setTimeout(async () => {
+    ctwaSyntheticTimers.delete(placeholderCacheKey);
+    const state = (ctwaPlaceholderCache.get(
+      placeholderCacheKey
+    ) || {}) as CtwaPlaceholderState;
+
+    // Só dispara sintética se placeholder ainda estiver pendente
+    // e nenhuma mensagem real tiver resolvido o estado.
+    if (!state.pending || state.syntheticDispatched) return;
+    await dispatchCtwaSyntheticInbound(msg, wbot, companyId, placeholderCacheKey);
+  }, CTWA_RETRY_DEBOUNCE_MS);
+
+  ctwaSyntheticTimers.set(placeholderCacheKey, timer);
+};
+
+const ensureCtwaPendingLead = async (
+  msg: proto.IWebMessageInfo,
+  wbot: Session,
+  companyId: number | string,
+  placeholderCacheKey: string
+): Promise<void> => {
+  if (msg?.key?.fromMe) return;
+  if (!msg?.key?.remoteJid || msg.key.remoteJid === "status@broadcast") return;
+  if (isCtwaNonDispatchEvent(msg)) return;
+
+  try {
+    const msgContact = await getContactMessage(msg, wbot);
+    if (!msgContact?.id) return;
+
+    const contact = await verifyContact(msgContact, wbot, companyId);
+    const whatsapp = await ShowWhatsAppService(wbot.id!, companyId);
+    const settings = await supabase.from("companies_settings").select("*").eq("company_id", companyId).maybeSingle().then(res => res.data ? { ...res.data, companyId: res.data.company_id, scheduleType: res.data.schedule_type } : null)
+
+    const ticket = await FindOrCreateTicketService(
+      contact,
+      whatsapp,
+      0,
+      companyId,
+      null,
+      null,
+      null,
+      "whatsapp",
+      false,
+      false,
+      settings
+    );
+
+    if (ticket.status === "closed") {
+      await UpdateTicketService({
+      ticketData: { status: "pending" },
+      ticketId: ticket.id,
+      companyId
+    });
+    }
+
+    const state = (ctwaPlaceholderCache.get(
+      placeholderCacheKey
+    ) || {}) as CtwaPlaceholderState;
+    ctwaPlaceholderCache.set(placeholderCacheKey, {
+      ...state,
+      pending: true,
+      contactId: contact.id,
+      ticketId: ticket.id,
+      remoteJid: msg.key.remoteJid,
+      messageId: msg.key.id
+    } as CtwaPlaceholderState);
+
+    logger.warn(
+      `[CTWA] Placeholder pendente registrado (ticket=${ticket.id}, contact=${contact.id}, messageId=${msg?.key?.id})`
+    );
+    scheduleCtwaSyntheticInbound(msg, wbot, companyId, placeholderCacheKey);
+  } catch (error) {
+    Sentry.captureException(error);
+    logger.error(
+      `[CTWA] Falha ao garantir lead pendente para placeholder messageId=${msg?.key?.id}: ${error}`
+    );
+  }
+};
+
+const runCtwaHistoryFallback = async (
+  wbot: Session,
+  msg: proto.IWebMessageInfo
+): Promise<void> => {
+  const fallbackFetchHistory = (wbot as any)?.fetchMessageHistory;
+  const fallbackStoreLoad = (wbot as any)?.store?.loadMessages;
+
+  try {
+    if (typeof fallbackFetchHistory === "function") {
+      await fallbackFetchHistory.call(
+        wbot,
+        20,
+        msg.key,
+        Number(msg?.messageTimestamp || Date.now())
+      );
+      logger.warn(
+        `[CTWA] Fallback fetchMessageHistory executado para ${msg?.key?.remoteJid}`
+      );
+      return;
+    }
+
+    if (typeof fallbackStoreLoad === "function") {
+      await fallbackStoreLoad.call(
+        (wbot as any).store,
+        msg?.key?.remoteJid,
+        20
+      );
+      logger.warn(
+        `[CTWA] Fallback store.loadMessages executado para ${msg?.key?.remoteJid}`
+      );
+      return;
+    }
+
+    logger.warn(
+      `[CTWA] Fallback histórico indisponível nesta versão do Baileys (messageId=${msg?.key?.id})`
+    );
+  } catch (error) {
+    Sentry.captureException(error);
+    logger.error(
+      `[CTWA] Falha no fallback de histórico para messageId=${msg?.key?.id}: ${error}`
+    );
+  }
+};
+
+const requestCtwaPlaceholderResend = async (
+  msg: proto.IWebMessageInfo,
+  wbot: Session,
+  companyId: number,
+  placeholderCacheKey: string
+): Promise<void> => {
+  const resendFn = (wbot as any)?.requestPlaceholderResend;
+  const state = (ctwaPlaceholderCache.get(
+    placeholderCacheKey
+  ) || {}) as CtwaPlaceholderState;
+
+  if (!state.pending) return;
+
+  if (state.attempts >= CTWA_RETRY_MAX) {
+    if (!state.fallbackAttempted) {
+      ctwaPlaceholderCache.set(placeholderCacheKey, {
+        ...state,
+        fallbackAttempted: true
+      } as CtwaPlaceholderState);
+      logger.warn(
+        `[CTWA] Limite de retries atingido (messageId=${msg?.key?.id}). Tentando fallback de histórico.`
+      );
+      await runCtwaHistoryFallback(wbot, msg);
+    }
+    return;
+  }
+
+  if (typeof resendFn !== "function") {
+    logger.warn(
+      `[CTWA] requestPlaceholderResend indisponível nesta sessão do Baileys (messageId=${msg?.key?.id})`
+    );
+    await runCtwaHistoryFallback(wbot, msg);
+    return;
+  }
+
+  if (!msg?.key?.id || !msg?.key?.remoteJid) {
+    logger.warn(
+      `[CTWA] resend abortado por key inválida (jid=${msg?.key?.remoteJid || "undefined"} id=${msg?.key?.id || "undefined"})`
+    );
+    return;
+  }
+
+  const nextAttempts = (state.attempts || 0) + 1;
+  ctwaPlaceholderCache.set(placeholderCacheKey, {
+    ...state,
+    attempts: nextAttempts,
+    lastRequestAt: Date.now()
+  } as CtwaPlaceholderState);
+
+  try {
+    logger.warn(
+      `[CTWA] resend requested -> jid=${msg.key.remoteJid} id=${msg.key.id}`
+    );
+    await resendFn.call(wbot, msg.key);
+    logger.warn(
+      `[CTWA] requestPlaceholderResend enviado (attempt=${nextAttempts}/${CTWA_RETRY_MAX}, messageId=${msg?.key?.id})`
+    );
+  } catch (error) {
+    Sentry.captureException(error);
+    logger.error(
+      `[CTWA] requestPlaceholderResend falhou (attempt=${nextAttempts}/${CTWA_RETRY_MAX}, messageId=${msg?.key?.id}): ${error}`
+    );
+  }
+
+  const stateAfterRequest = (ctwaPlaceholderCache.get(
+    placeholderCacheKey
+  ) || {}) as CtwaPlaceholderState;
+  if (stateAfterRequest.pending && stateAfterRequest.attempts < CTWA_RETRY_MAX) {
+    const retryTimer = setTimeout(() => {
+      ctwaRetryTimers.delete(placeholderCacheKey);
+      requestCtwaPlaceholderResend(msg, wbot, companyId, placeholderCacheKey);
+    }, CTWA_RETRY_DEBOUNCE_MS);
+
+    ctwaRetryTimers.set(placeholderCacheKey, retryTimer);
+  } else if (stateAfterRequest.pending) {
+    await requestCtwaPlaceholderResend(msg, wbot, companyId, placeholderCacheKey);
+  }
+};
+
+const scheduleCtwaPlaceholderResend = async (
+  msg: proto.IWebMessageInfo,
+  wbot: Session,
+  companyId: number,
+  placeholderCacheKey: string
+): Promise<void> => {
+  if (ctwaRetryTimers.has(placeholderCacheKey)) {
+    logger.debug(
+      `[CTWA] Debounce ativo para resend de placeholder (messageId=${msg?.key?.id})`
+    );
+    return;
+  }
+
+  const timer = setTimeout(() => {
+    ctwaRetryTimers.delete(placeholderCacheKey);
+    requestCtwaPlaceholderResend(msg, wbot, companyId, placeholderCacheKey);
+  }, CTWA_RETRY_DEBOUNCE_MS);
+
+  ctwaRetryTimers.set(placeholderCacheKey, timer);
+};
+
+const clearCtwaPendingIfRecovered = (
+  companyId: number,
+  wbot: Session,
+  msg: proto.IWebMessageInfo
+) => {
+  const placeholderCacheKey = getCtwaPlaceholderCacheKey(companyId, wbot, msg);
+  const chatCacheKey = getCtwaChatCacheKey(companyId, wbot, msg);
+
+  const directPending = ctwaPlaceholderCache.get(
+    placeholderCacheKey
+  ) as CtwaPlaceholderState;
+  const chatPendingRef = ctwaPlaceholderByChatCache.get(chatCacheKey) as
+    | string
+    | undefined;
+  const chatPendingState = chatPendingRef
+    ? (ctwaPlaceholderCache.get(chatPendingRef) as CtwaPlaceholderState)
+    : undefined;
+
+  const pendingKey = directPending?.pending
+    ? placeholderCacheKey
+    : chatPendingState?.pending
+      ? chatPendingRef
+      : null;
+
+  if (!pendingKey) return;
+
+  ctwaPlaceholderCache.del(pendingKey);
+  ctwaPlaceholderByChatCache.del(chatCacheKey);
+  ctwaSyntheticByChatCache.del(chatCacheKey);
+
+  const retryTimer = ctwaRetryTimers.get(pendingKey);
+  if (retryTimer) {
+    clearTimeout(retryTimer);
+    ctwaRetryTimers.delete(pendingKey);
+  }
+  const syntheticTimer = ctwaSyntheticTimers.get(pendingKey);
+  if (syntheticTimer) {
+    clearTimeout(syntheticTimer);
+    ctwaSyntheticTimers.delete(pendingKey);
+  }
+
+  logger.warn(
+    `[CTWA] Placeholder resolvido; mensagem real voltou ao pipeline inbound normal (messageId=${msg?.key?.id})`
+  );
+};
+
+const wbotMessageListener = (wbot: Session, companyId: number | string): void => {
+const wbotUserJid = wbot?.user?.id;
+  wbot.ev.on("messages.upsert", async (messageUpsert: ImessageUpsert) => {
+    const messages = messageUpsert.messages
+      .filter(filterMessages)
+      .map(msg => msg);
+
+    if (!messages.length) return;
+
+  for (const message of messages) {
+     console.log(`[DEBUG] New message: id=${message.key.id}, fromMe=${message.key.fromMe}, remoteJid=${message.key.remoteJid}`);
+     try {
+  // Ignore Status e Canais (WhatsApp Channels)
+  const rjid = message?.key?.remoteJid || "";
+  if (
+    rjid === "status@broadcast" ||
+    rjid.endsWith("@newsletter") ||
+    rjid.endsWith("@broadcast")
+  ) {
+    continue;
+  }
+
+  let messageId = message?.key?.id;
+  if (!messageId) {
+    const fallbackId = getStableMissingId(message, wbot, rjid);
+    message.key = { ...(message.key || {}), id: fallbackId } as any;
+    messageId = fallbackId;
+    logger.warn(
+      `[CTWA] Mensagem sem key.id recebeu fallback id=${fallbackId} (remoteJid=${rjid})`
+    );
+  }
+
+  const placeholderCacheKey = getCtwaPlaceholderCacheKey(companyId, wbot, message);
+  const chatCacheKey = getCtwaChatCacheKey(companyId, wbot, message);
+
+  // 🔎 Fallback CTWA: mensagens inbound privadas sem conteúdo "útil"
+  // mas que não passam nos hints explícitos de placeholder do Baileys.
+  const ctwaEligible = isCtwaEligiblePrivateInbound(message);
+  const ctwaHasContent = hasUsableInboundContent(message);
+  const ctwaNonDispatchEvent = isCtwaNonDispatchEvent(message);
+  const ctwaHasHint = hasCtwaContextHint(message);
+
+  if (
+    ctwaEligible &&
+    !ctwaNonDispatchEvent &&
+    ctwaHasHint &&
+    !ctwaHasContent &&
+    !isCtwaPlaceholderMessage(message)
+  ) {
+    const previousState = (ctwaPlaceholderCache.get(
+      placeholderCacheKey
+    ) || {}) as CtwaPlaceholderState;
+
+    ctwaPlaceholderCache.set(placeholderCacheKey, {
+      ...previousState,
+      pending: true,
+      attempts: previousState.attempts || 0,
+      remoteJid: message?.key?.remoteJid,
+      messageId
+    } as CtwaPlaceholderState);
+    ctwaPlaceholderByChatCache.set(chatCacheKey, placeholderCacheKey);
+
+    logger.warn(
+      `[CTWA] Placeholder (fallback) detectado sem hints explícitos (messageId=${messageId}, remoteJid=${rjid})`
+    );
+
+    await ensureCtwaPendingLead(message, wbot, companyId, placeholderCacheKey);
+    await scheduleCtwaPlaceholderResend(message, wbot, companyId, placeholderCacheKey);
+    continue;
+  }
+
+  if (!ctwaNonDispatchEvent && isCtwaPlaceholderMessage(message)) {
+    const previousState = (ctwaPlaceholderCache.get(
+      placeholderCacheKey
+    ) || {}) as CtwaPlaceholderState;
+
+    ctwaPlaceholderCache.set(placeholderCacheKey, {
+      ...previousState,
+      pending: true,
+      attempts: previousState.attempts || 0,
+      remoteJid: message?.key?.remoteJid,
+      messageId
+    } as CtwaPlaceholderState);
+    ctwaPlaceholderByChatCache.set(chatCacheKey, placeholderCacheKey);
+
+    logger.warn(
+      `[CTWA] Placeholder detectado (messageId=${messageId}, remoteJid=${rjid}). Solicitando resend.`
+    );
+
+    await ensureCtwaPendingLead(message, wbot, companyId, placeholderCacheKey);
+    await scheduleCtwaPlaceholderResend(message, wbot, companyId, placeholderCacheKey);
+    continue;
+  }
+
+  clearCtwaPendingIfRecovered(companyId, wbot, message);
+
+  if (
+    message?.messageStubParameters?.length &&
+    message.messageStubParameters[0].includes("absent")
+  ) {
+    const msg = {
+      companyId: companyId,
+      whatsappId: wbot.id,
+      message: message
+    };
+    logger.warn("MENSAGEM PERDIDA", JSON.stringify(msg));
+  }
+
+  const { count: messageExists } = await supabase
+    .from("messages")
+    .select("*", { count: "exact", head: true })
+    .eq("message_id", messageId)
+    .eq("company_id", companyId);
+
+  if (!messageExists) {
+    if (!markInboundDispatchInFlight(companyId, wbot, messageId)) {
+      logger.warn(
+        `[CTWA] Mensagem duplicada ignorada por idempotência (messageId=${messageId})`
+      );
+      continue;
+    }
+
+    let isCampaign = false;
+    let body = await getBodyMessage(message);
+    const fromMe = message?.key?.fromMe;
+    if (fromMe) {
+      isCampaign = /\u200c/.test(body);
+    } else {
+      if (/\u200c/.test(body)) body = body.replace(/\u200c/, "");
+      logger.debug(
+        "Validação de mensagem de campanha enviada por terceiros: " + body
+      );
+    }
+
+    if (!isCampaign) {
+      if (REDIS_URI_MSG_CONN !== "") {
+        try {
+          await BullQueues.add(
+            `${process.env.DB_NAME}-handleMessage`,
+            { message, wbot: wbot.id, companyId },
+            {
+              priority: 1,
+              jobId: `${wbot.id}-handleMessage-${messageId}`
+            }
+          );
+        } catch (e) {
+          Sentry.captureException(e);
+        }
+      } else {
+        console.log("log... 3970");
+        await handleMessage(message, wbot, companyId);
+      }
+    }
+
+    await verifyRecentCampaign(message, companyId);
+    await verifyCampaignMessageAndCloseTicket(message, companyId, wbot);
+  }
+
+  if (message.key.remoteJid?.endsWith("@g.us") && message.key.fromMe) {
+    if (REDIS_URI_MSG_CONN !== "") {
+      BullQueues.add(
+        `${process.env.DB_NAME}-handleMessageAck`,
+        { msg: message, chat: 1 },
+        {
+          priority: 1,
+          jobId: `${wbot.id}-handleMessageAck-${message.key.id}`
+        }
+      );
+    } else {
+      persistAck(companyId, message.key.id, 1); // <--- CORREÇÃO
+    }
+  }
+  } catch (error) {
+    Sentry.captureException(error);
+    logger.error(
+      `[CTWA] Falha ao processar message.upsert (messageId=${message?.key?.id || "sem-id"}, remoteJid=${message?.key?.remoteJid || "sem-jid"}): ${error}`
+    );
+  }
+}
+
+    // messages.forEach(async (message: proto.IWebMessageInfo) => {
+    //   const messageExists = await Message.count({
+    //     where: { id: message.key.id!, companyId }
+    //   });
+
+    //   if (!messageExists) {
+    //     await handleMessage(message, wbot, companyId);
+    //     await verifyRecentCampaign(message, companyId);
+    //     await verifyCampaignMessageAndCloseTicket(message, companyId);
+    //   }
+    // });
+  });
+
+  // === ACK UTILS (defina UMA vez, acima dos handlers) ===
+// agora retorna boolean para sabermos se atualizou
+async function updateAckSafe(where: any, nextAck: number | undefined): Promise<boolean> {
+  if (nextAck == null) return false;
+
+  // Normaliza o where para Supabase (message_id ao invés de wid/messageId)
+  const normalizedWhere = { ...where };
+  if (normalizedWhere.wid) {
+    normalizedWhere.message_id = normalizedWhere.wid;
+    delete normalizedWhere.wid;
+  }
+  if (normalizedWhere.messageId) {
+    normalizedWhere.message_id = normalizedWhere.messageId;
+    delete normalizedWhere.messageId;
+  }
+
+  const { data: msg } = await supabase
+    .from("messages")
+    .select("*")
+    .match(normalizedWhere)
+    .maybeSingle();
+
+  if (!msg) return false;
+
+  const current = Number(msg.ack ?? 0);
+  const target  = Math.max(current, Number(nextAck));
+  if (target === current) return false;
+
+  await supabase
+    .from("messages")
+    .update({ ack: target })
+    .eq("id", msg.id);
+
+  const fullMessage = await ShowMessageService(msg.message_id);
+
+  emitAppMessage(msg.company_id, msg.ticket_id, {
+    action: "update",
+    message: fullMessage,
+    ticket: fullMessage?.ticket,
+    contact: fullMessage?.ticket?.contact
+  });
+
+  return true;
+}
+
+
+
+async function persistAck(companyId: number | string, msgId: string, ack: number) {
+  console.log(`[DEBUG] persistAck called: msgId=${msgId}, ack=${ack}, companyId=${companyId}`);
+  await updateAckSafe({ companyId, message_id: msgId }, ack);
+}
+
+
+// Tipagem leve compatível com Baileys 6.7.x (declare UMA vez)
+type ReceiptLike = {
+  // se você não importa Long, deixe só number|string|null
+  deliveredTimestamp?: number | string | null;
+  readTimestamp?: number | string | null;
+  playedTimestamp?: number | string | null;
+};
+
+type MessageUserReceiptUpdateLike = {
+  key?: { id?: string | null } | null;
+  receipt?: ReceiptLike | null;
+};
+
+// === messages.update ===
+wbot.ev.on("messages.update", async (updates: WAMessageUpdate[]) => {
+  if (!updates?.length) return;
+
+  const first = updates[0] as any;
+  if (
+    first?.update?.messageStubType === 1 &&
+    first?.key?.remoteJid !== "status@broadcast"
+  ) {
+    MarkDeleteWhatsAppMessage(
+      first?.key?.remoteJid,
+      null,
+      first?.key?.id,
+      companyId
+    );
+  }
+
+  for (const u of updates) {
+    try {
+      if (!u?.key?.fromMe) {
+        (wbot as WASocket).readMessages([u.key]);
+      }
+
+      const rawStatus = u?.update?.status;
+      let ack: number | undefined;
+
+      // Mapeamento correto do status do Baileys para o ack do sistema
+      if (typeof rawStatus === "number") {
+        switch (rawStatus) {
+          case 2: // SERVER_ACK (Enviado)
+            ack = 1;
+            break;
+          case 3: // DELIVERY_ACK (Entregue)
+            ack = 2;
+            break;
+          case 4: // READ (Lido)
+            ack = 3;
+            break;
+          case 5: // PLAYED (Reproduzido)
+            ack = 4;
+            break;
+        }
+      }
+
+      const msgIdUpdate = u?.key?.id as string | undefined;
+      if (!msgIdUpdate) continue;
+
+      if (ack != null) {
+        await persistAck(companyId, msgIdUpdate, ack);
+      }
+    } catch (err) {
+      console.error("messages.update ack error:", err);
+    }
+  }
+});
+
+// === message-receipt.update ===
+wbot.ev.on("message-receipt.update", async (updates: MessageUserReceiptUpdate[]) => {
+  console.log(`[DEBUG] message-receipt.update received: ${JSON.stringify(updates)}`);
+  if (!Array.isArray(updates) || updates.length === 0) return;
+
+  for (const rec of updates) {
+    try {
+      const msgId = rec?.key?.id as string | undefined;
+      if (!msgId) continue;
+
+      const r: any = rec?.receipt ?? {};
+
+      let ack: number | undefined;
+      if (r?.playedTimestamp)        ack = 4; // reproduzida
+      else if (r?.readTimestamp)     ack = 3; // lida
+      else if (r?.deliveredTimestamp) ack = 2; // entregue
+
+      if (ack != null) {
+        await persistAck(companyId, msgId, ack);
+      }
+    } catch (err) {
+      console.error("message-receipt.update error:", err);
+    }
+  }
+}); // <-- fecha o 'on' de message-receipt.update
+
+
+  // wbot.ev.on('message-receipt.update', (events: any) => {
+  //   events.forEach(async (msg: any) => {
+  //     const ack = msg?.receipt?.receiptTimestamp ? 3 : msg?.receipt?.readTimestamp ? 4 : 0;
+  //     if (!ack) return;
+  //     await handleMsgAck(msg, ack);
+  //   });
+  // })
+  // wbot.ev.on("presence.update", (events: any) => {
+  //   console.log(events)
+  // })
+
+    wbot.ev.on("contacts.update", (contacts: any) => {
+    contacts.forEach(async (contact: any) => {
+      if (!contact?.id) return;
+
+      if (typeof contact.imgUrl !== "undefined") {
+        const newUrl =
+          contact.imgUrl === ""
+            ? ""
+            : await wbot!.profilePictureUrl(contact.id!).catch(() => null);
+
+        // [LID/JID] extrai ids a partir do contact.id
+        const { lid, jid } = parseLidJid(contact.id);
+
+        const contactData = {
+          name: contact.id.replace(/\D/g, ""),
+          number: contact.id.replace(/\D/g, ""),
+          isGroup: contact.id.includes("@g.us") ? true : false,
+          companyId: companyId,
+          remoteJid: contact.id,
+          profilePicUrl: newUrl,
+          whatsappId: wbot.id,
+          wbot: wbot,
+          // [LID/JID] novos campos
+          lid,
+          jid
+        };
+
+        await CreateOrUpdateContactService(contactData);
+      }
+    });
+  });
+
+    wbot.ev.on("groups.update", (groupUpdate: GroupMetadata[]) => {
+    if (!groupUpdate[0]?.id) return;
+    if (groupUpdate.length === 0) return;
+    groupUpdate.forEach(async (group: GroupMetadata) => {
+      const number = group.id.replace(/\D/g, "");
+      const nameGroup = group.subject || number;
+
+      let profilePicUrl: string = "";
+       try {
+         profilePicUrl = await wbot.profilePictureUrl(group.id, "image");
+       } catch (e) {
+         Sentry.captureException(e);
+         profilePicUrl = `${process.env.FRONTEND_URL}/nopicture.png`;
+       }
+
+      // [LID/JID] extrai ids a partir do group.id
+      const { lid, jid } = parseLidJid(group.id);
+
+      const contactData = {
+        name: nameGroup,
+        number: number,
+        isGroup: true,
+        companyId: companyId,
+        remoteJid: group.id,
+        profilePicUrl,
+        whatsappId: wbot.id,
+        wbot: wbot,
+        // [LID/JID] novos campos
+        lid,
+        jid
+      };
+
+      const contact = await CreateOrUpdateContactService(contactData);
+    });
+  });
+};
+
+export {
+  wbotMessageListener,
+  handleMessage,
+  verifyMessage,
+  verifyMediaMessage,
+  isValidMsg,
+  getTypeMessage,
+  handleMsgAck
+};
+
+export default wbotMessageListener;

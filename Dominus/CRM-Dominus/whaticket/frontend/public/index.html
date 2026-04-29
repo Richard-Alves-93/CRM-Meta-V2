@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="minimum-scale=1, initial-scale=1, width=device-width" />
+  <meta name="theme-color" content="#f8fafc" />
+  <meta name="color-scheme" content="light" />
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <meta http-equiv="Pragma" content="no-cache" />
+  <meta http-equiv="Expires" content="0" />
+
+  <title>CRM Dominus · Carregando...</title>
+  <link rel="apple-touch-icon" href="%PUBLIC_URL%/apple-touch-icon.png" />
+  <link rel="icon" href="%PUBLIC_URL%/favicon.ico" />
+  <link rel="manifest" href="%PUBLIC_URL%/manifest.json" />
+
+  <!-- Inter Font -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
+  <!-- Força tema claro no login antes do primeiro paint -->
+  <script>
+    (function () {
+      var path = location.pathname || "/";
+      var isLogin = /\/(login|signup|forgot-password)(\/|$|\?)/i.test(path) || path === "/";
+      try {
+        if (isLogin) {
+          localStorage.setItem("theme", "light");
+          document.documentElement.classList.remove("dark");
+          document.documentElement.setAttribute("data-theme", "light");
+
+          document.addEventListener("DOMContentLoaded", function () {
+            document.body.classList.add("login-page");
+          });
+        } else {
+          var theme = localStorage.getItem("theme");
+          if (theme === "dark") {
+            document.documentElement.classList.add("dark");
+            document.documentElement.setAttribute("data-theme", "dark");
+          } else {
+            document.documentElement.classList.remove("dark");
+            document.documentElement.setAttribute("data-theme", "light");
+          }
+        }
+      } catch (e) {
+        document.documentElement.classList.remove("dark");
+        document.documentElement.setAttribute("data-theme", "light");
+      }
+    })();
+  </script>
+
+  <style>
+    :root {
+      --brand: #3b82f6;
+      --brand-soft: #dbeafe;
+      --bg: #f3f7ff;
+      --surface: #ffffff;
+      --surface-stroke: #dbe7ff;
+      --title: #0f172a;
+      --text: #334155;
+      --muted: #64748b;
+      --track: #e8eefc;
+      --progress: #3b82f6;
+    }
+
+    html,
+    body {
+      height: 100%;
+      margin: 0;
+    }
+
+    body {
+      font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(900px 500px at 8% -10%, #e5efff 0%, transparent 65%),
+        radial-gradient(900px 500px at 98% 105%, #eaf2ff 0%, transparent 65%),
+        var(--bg);
+    }
+
+    #splash {
+      position: fixed;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      padding: 16px;
+      z-index: 9999;
+    }
+
+    .splash-panel {
+      width: min(440px, 100%);
+      padding: 26px;
+      border-radius: 20px;
+      border: 1px solid var(--surface-stroke);
+      background: linear-gradient(180deg, #ffffff 0%, #fbfdff 100%);
+      box-shadow: 0 18px 40px -24px rgba(37, 99, 235, 0.28);
+      text-align: center;
+    }
+
+    .brand-row {
+      margin-bottom: 12px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+    }
+
+    .brand-title {
+      margin: 0;
+      color: var(--title);
+      font-size: 24px;
+      line-height: 1.2;
+      font-weight: 700;
+      letter-spacing: 0.1px;
+    }
+
+    .brand-subtitle {
+      margin: 5px 0 0;
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .loader-wrap {
+      display: grid;
+      place-items: center;
+      margin: 18px 0 16px;
+    }
+
+    .loader-ring {
+      width: 36px;
+      height: 36px;
+      border-radius: 999px;
+      border: 2px solid rgba(59, 130, 246, 0.2);
+      border-top-color: var(--brand);
+      animation: spin 0.9s linear infinite;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .progress-wrap {
+      margin-top: 2px;
+    }
+
+    .progress-track {
+      height: 8px;
+      border-radius: 999px;
+      overflow: hidden;
+      background: var(--track);
+      border: 1px solid #d6e3ff;
+    }
+
+    .progress-bar {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #60a5fa 0%, #3b82f6 100%);
+      transition: width 0.35s ease-in-out;
+    }
+
+    .progress-meta {
+      margin-top: 8px;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 10px;
+      font-size: 11.5px;
+      color: var(--muted);
+      text-align: center;
+    }
+
+    .splash-footer {
+      margin-top: 14px;
+      display: flex;
+      justify-content: center;
+      font-size: 11.5px;
+      color: #5f6b80;
+    }
+
+    .version-badge {
+      background: #f1f5ff;
+      border: 1px solid #dbe6ff;
+      color: #41516d;
+      border-radius: 999px;
+      padding: 4px 10px;
+    }
+
+    .splash-hide {
+      opacity: 0 !important;
+      pointer-events: none !important;
+      transform: translateY(8px) scale(0.985);
+      transition: opacity 0.35s ease, transform 0.35s ease;
+    }
+
+    @media (max-width: 640px) {
+      .splash-panel { padding: 18px; border-radius: 14px; }
+      .brand-title { font-size: 19px; }
+      .brand-subtitle { font-size: 12px; }
+    }
+
+    /* Inputs brancos no login (mantido do seu índice original) */
+    body.login-page .MuiInputBase-root,
+    body.login-page .MuiOutlinedInput-root,
+    body.login-page .MuiOutlinedInput-input,
+    body.login-page .MuiInputBase-input,
+    body.login-page .MuiInputAdornment-root {
+      background-color: #ffffff !important;
+      color: #000000 !important;
+    }
+    body.login-page .MuiOutlinedInput-root.Mui-focused,
+    body.login-page .MuiOutlinedInput-root.Mui-disabled,
+    body.login-page .MuiOutlinedInput-root.Mui-error,
+    body.login-page .MuiOutlinedInput-root.MuiInputBase-adornedStart,
+    body.login-page .MuiOutlinedInput-root.MuiInputBase-adornedEnd,
+    body.login-page .MuiOutlinedInput-root:hover {
+      background-color: #ffffff !important;
+      color: #000000 !important;
+    }
+    body.login-page .MuiOutlinedInput-notchedOutline {
+      border-color: #e5e7eb !important;
+    }
+    body.login-page .MuiOutlinedInput-root:hover .MuiOutlinedInput-notchedOutline {
+      border-color: #cbd5e1 !important;
+    }
+    body.login-page .MuiOutlinedInput-root.Mui-focused .MuiOutlinedInput-notchedOutline {
+      border-color: #10b981 !important;
+    }
+    body.login-page input:-webkit-autofill,
+    body.login-page input:-webkit-autofill:hover,
+    body.login-page input:-webkit-autofill:focus {
+      -webkit-text-fill-color: #000000 !important;
+      transition: background-color 9999s ease-out 0s !important;
+      box-shadow: 0 0 0px 1000px #ffffff inset !important;
+    }
+    body.login-page input:-moz-ui-invalid,
+    body.login-page input:-moz-ui-valid {
+      background-color: #ffffff !important;
+      color: #000000 !important;
+    }
+  </style>
+
+  <script>
+    // Compat SharedArrayBuffer
+    if (!crossOriginIsolated) { /* eslint-disable-next-line */ SharedArrayBuffer = ArrayBuffer; }
+  </script>
+</head>
+
+<body>
+  <!-- Splash Screen -->
+  <div id="splash">
+    <section class="splash-panel">
+      <div class="brand-row">
+        <div>
+          <h1 class="brand-title">CRM Dominus</h1>
+          <p class="brand-subtitle">Atendimento Inteligente — Preparando seu ambiente.</p>
+        </div>
+      </div>
+
+      <div class="loader-wrap">
+        <div class="loader-ring"></div>
+      </div>
+
+      <div class="progress-wrap">
+        <div class="progress-track">
+          <div id="progress" class="progress-bar"></div>
+        </div>
+        <div class="progress-meta">
+          <span>Carregando módulos do painel</span>
+          <strong id="progress-label">0%</strong>
+        </div>
+      </div>
+
+      <div class="splash-footer">
+        <span class="version-badge">Versão <strong id="app-version">15.0.3</strong></span>
+      </div>
+    </section>
+  </div>
+
+  <!-- Root da aplicação React -->
+  <div id="root"></div>
+  <noscript class="block px-6 py-4 text-sm">
+    Você precisa habilitar o JavaScript para executar este app.
+  </noscript>
+
+  <script>
+    // Setup inicial: permite trocar a cor de brand e (opcionalmente) a versão em runtime
+    (function setupBrand() {
+      window.setSplashBrand = function (hex) {
+        try {
+          document.documentElement.style.setProperty('--brand', hex);
+        } catch (e) {}
+      };
+
+      // Compat de versão (se algum script ainda usar isso)
+      window.setAppVersion = function (v) {
+        var versionLabel = document.getElementById("app-version");
+        if (versionLabel) {
+          versionLabel.textContent = v || "15.0.0";
+        }
+      };
+
+      window.setAppVersion("15.0.3");
+    })();
+
+    // Controle de progresso / saída do splash
+    (function bootProgress() {
+      let p = 0;
+      const bar = document.getElementById("progress");
+      const label = document.getElementById("progress-label");
+      const splash = document.getElementById("splash");
+
+      const timer = setInterval(() => {
+        if (p < 55) p += 9;
+        else if (p < 80) p += 3;
+        else if (p < 98) p += Math.max(0.6, (99 - p) / 18);
+
+        if (bar) bar.style.width = p + "%";
+        if (label) label.textContent = Math.min(100, Math.round(p)) + "%";
+      }, 700);
+
+      window.finishProgress = () => {
+        p = 100;
+        if (bar) bar.style.width = "100%";
+        if (label) label.textContent = "100%";
+        clearInterval(timer);
+        setTimeout(() => splash && splash.classList.add("splash-hide"), 250);
+        setTimeout(() => splash && splash.remove(), 650);
+      };
+    })();
+  </script>
+</body>
+</html>
